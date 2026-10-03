@@ -36,6 +36,11 @@
   #notes { margin-top: 14px; display: none; }
   #noteStrip { display: flex; gap: 4px; align-items: flex-end; min-height: 64px; margin-top: 8px;
                background: #0a0c10; border-radius: 10px; padding: 10px; overflow-x: auto; }
+  #hitLane { position: relative; height: 30px; margin-top: 6px; background: #0a0c10;
+             border-radius: 8px; display: none; }
+  .hit { position: absolute; top: 5px; width: 20px; height: 20px; border-radius: 50%;
+         font-size: 10px; font-weight: 800; color: #0d0f14; display: flex;
+         align-items: center; justify-content: center; transform: translateX(-50%); }
   .nbar { background: linear-gradient(180deg, var(--acc), #d98a2b); border-radius: 5px 5px 2px 2px;
           min-width: 26px; display: flex; align-items: flex-end; justify-content: center;
           padding-bottom: 4px; font-size: 10px; font-weight: 700; color: #201503; flex: none; }
@@ -48,7 +53,7 @@
 <body>
 <header>
   <h1>WHISTLE<span>BOX</span></h1>
-  <p>record your whistle, hear it as instruments. v0.2</p>
+  <p>record your whistle, hear it as instruments. v0.3</p>
 </header>
 <div id="stage">
   <div id="timer">0:00</div>
@@ -57,8 +62,9 @@
   <button id="recBtn">Record</button>
 
   <div id="notes">
-    <div class="row"><label>what we heard (<span id="noteCount">0</span> notes)</label></div>
+    <div class="row"><label>what we heard (<span id="noteCount">0</span> notes, <span id="hitCount">0</span> drum hits)</label></div>
     <div id="noteStrip"></div>
+    <div id="hitLane"></div>
     <div class="row" id="instRow"><label>instrument</label></div>
     <div class="row" id="scaleRow"><label>scale</label></div>
     <div class="row" id="playRow">
@@ -1118,6 +1124,7 @@ let AC = null, capNode = null, micStream = null;
 let chunks = [], recording = false, recStart = 0, recTimerInt = null;
 let rawBuffer = null;   // Float32Array of the take
 let notes = [];         // detected [{midi, start, dur, vel}]
+let hits = [];          // detected drum hits [{t, kind, vel}]
 let curScale = "Major", curInst = "Lead";
 let synthNodes = null, playing = false;
 
@@ -1133,30 +1140,63 @@ class WBCapture extends AudioWorkletProcessor {
 registerProcessor("wb-capture", WBCapture);
 `;
 
-/* ================= offline analysis ================= */
-function analyzeBuffer(buf, sampleRate, scaleName) {
+/* ================= offline analysis: notes + drum hits ================= */
+// whistle-synth lesson: the noise floor is learned from frames that are NOT
+// notes (low periodicity), never from mere quiet. Level rejects the room,
+// periodicity rejects noise; they are independent tests.
+function analyzeTake(buf, sampleRate, scaleName) {
   const det = PitchDetector.forFloat32Array(WIN);
   det.clarityThreshold = CLARITY_MIN;
-  const win = new Float32Array(WIN);
-  const frames = []; // {f, c, rms}
+  const fft = new FFT(WIN);
+  const hann = new Float32Array(WIN);
+  for (let i = 0; i < WIN; i++) hann[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / WIN));
+
+  const frames = [];
+  let prevMag = null;
+  const rIn = new Float32Array(WIN);
+  const cOut = new Array(WIN * 2);
   for (let pos = 0; pos + WIN <= buf.length; pos += HOP) {
-    win.set(buf.subarray(pos, pos + WIN));
-    let rms = 0;
-    for (let j = 0; j < WIN; j++) rms += win[j] * win[j];
+    const win = buf.subarray(pos, pos + WIN);
+    let rms = 0, zc = 0;
+    for (let j = 0; j < WIN; j++) {
+      rms += win[j] * win[j];
+      if (j > 0 && (win[j] >= 0) !== (win[j - 1] >= 0)) zc++;
+    }
     rms = Math.sqrt(rms / WIN);
     let f = 0, c = 0;
     if (rms > 1e-4) { const r = det.findPitch(win, sampleRate); f = r[0]; c = r[1]; }
-    frames.push({ f, c, rms });
+    // spectrum for timbre (realTransform takes a real input array)
+    for (let j = 0; j < WIN; j++) rIn[j] = win[j] * hann[j];
+    fft.realTransform(cOut, rIn);
+    fft.completeSpectrum(cOut);
+    let sM = 0, sF = 0, sL = 0, flux = 0;
+    const NB = WIN / 2;
+    for (let j = 1; j < NB; j++) {
+      const m = Math.hypot(cOut[2 * j], cOut[2 * j + 1]);
+      sM += m; sF += m * j;
+      if (m > 1e-9) sL += Math.log(m);
+      if (prevMag) { const d = m - prevMag[j]; if (d > 0) flux += d; }
+    }
+    const centroid = sM > 1e-9 ? (sF / sM) * sampleRate / WIN : 0;
+    const flatness = sM > 1e-9 ? Math.exp(sL / (NB - 1)) / (sM / (NB - 1)) : 0;
+    if (!prevMag) prevMag = new Float32Array(NB);
+    for (let j = 0; j < NB; j++) prevMag[j] = Math.hypot(cOut[2 * j], cOut[2 * j + 1]);
+    frames.push({ f, c, rms, zcr: zc / WIN, centroid, flatness, flux, t: pos / sampleRate });
   }
-  // relative gate from the near-quietest frames (room noise, not the tone)
-  const rs = frames.map(x => x.rms).sort((a, b) => a - b);
-  const floor = rs[Math.floor(rs.length * 0.05)] || 0.004;
-  const maxRms = rs[rs.length - 1] || 0.01;
+  if (!frames.length) return { notes: [], hits: [] };
+
+  // floor from aperiodic frames (room noise, not notes, not beatbox hits)
+  const aper = frames.filter(x => x.c < 0.5).map(x => x.rms).sort((a, b) => a - b);
+  const floor = aper.length > 8 ? aper[Math.floor(aper.length * 0.2)] : 0.004;
+  const maxRms = Math.max(...frames.map(x => x.rms));
   const gate = Math.min(Math.max(0.008, floor * 4), maxRms * 0.5);
 
-  // segment into notes
-  const raw = [];
-  let cur = null, onN = 0, offN = 0;
+  const notes = findNotes(frames, gate, scaleName);
+  const hits = findHits(frames, gate, notes);
+  return { notes, hits };
+}
+
+function findNotes(frames, gate, scaleName) {
   const iv = SCALES[scaleName];
   const snap = mf => {
     const base = Math.round(mf);
@@ -1168,51 +1208,135 @@ function analyzeBuffer(buf, sampleRate, scaleName) {
     }
     return best;
   };
-  frames.forEach((fr, i) => {
-    const tone = fr.c >= CLARITY_MIN && fr.rms >= gate && fr.f > 60 && fr.f < 5000;
-    if (tone) { onN++; offN = 0; } else { offN++; onN = 0; }
-    const t = i * HOP / sampleRate;
-    if (!cur && onN >= HOPS_ON) {
-      cur = { start: (i - HOPS_ON + 1) * HOP / sampleRate, fs: [], rms: [] };
-    }
-    if (cur && tone) { cur.fs.push(fr.f); cur.rms.push(fr.rms); }
-    if (cur && offN >= HOPS_OFF) {
-      const endT = (i - HOPS_OFF + 1) * HOP / sampleRate;
-      cur.fs.sort((a, b) => a - b);
-      const med = cur.fs[Math.floor(cur.fs.length / 2)];
-      const dur = endT - cur.start;
-      if (dur >= MIN_NOTE_S && med > 0) {
-        let mf = hz2midi(med);
-        const prev = raw.length ? raw[raw.length - 1].midiF : null;
-        if (prev !== null) {
-          while (mf > prev + 6) mf -= 12;
-          while (mf < prev - 6) mf += 12;
-        }
-        const midi = snap(mf);
-        const vel = Math.min(1, Math.max(...cur.rms) / (gate * 3));
-        raw.push({ midi, midiF: mf, start: cur.start, dur, vel });
-      }
-      cur = null;
-    }
-  });
-  // flush a note still open at end of buffer
-  if (cur) {
-    const endT = buf.length / sampleRate;
+  const closeNote = (cur, endT, raw) => {
     cur.fs.sort((a, b) => a - b);
     const med = cur.fs[Math.floor(cur.fs.length / 2)];
     const dur = endT - cur.start;
-    if (dur >= MIN_NOTE_S && med > 0) {
-      let mf = hz2midi(med);
-      const prev = raw.length ? raw[raw.length - 1].midiF : null;
-      if (prev !== null) {
-        while (mf > prev + 6) mf -= 12;
-        while (mf < prev - 6) mf += 12;
-      }
+    // stability: a whistle note holds pitch; a kick sweeps. Reject sweepers.
+    const p10 = cur.fs[Math.floor(cur.fs.length * 0.1)];
+    const p90 = cur.fs[Math.floor(cur.fs.length * 0.9)];
+    const stable = p10 > 0 && p90 / p10 < 1.25;
+    if (dur >= MIN_NOTE_S && med > 0 && stable) {
+      const mf = hz2midi(med);
       const vel = Math.min(1, Math.max(...cur.rms) / (gate * 3));
-      raw.push({ midi: snap(mf), midiF: mf, start: cur.start, dur, vel });
+      raw.push({ midi: snap(mf), start: cur.start, dur, vel });
     }
-  }
+  };
+  const raw = [];
+  let cur = null, onN = 0, offN = 0;
+  frames.forEach((fr, i) => {
+    const tone = fr.c >= CLARITY_MIN && fr.rms >= gate && fr.f > 60 && fr.f < 5000;
+    if (tone) { onN++; offN = 0; } else { offN++; onN = 0; }
+    if (!cur && onN >= HOPS_ON) cur = { start: (i - HOPS_ON + 1) * HOP / AC_SR, fs: [], rms: [] };
+    if (cur && tone) { cur.fs.push(fr.f); cur.rms.push(fr.rms); }
+    if (cur && offN >= HOPS_OFF) {
+      closeNote(cur, (i - HOPS_OFF + 1) * HOP / AC_SR, raw);
+      cur = null;
+    }
+  });
+  if (cur) closeNote(cur, frames[frames.length - 1].t + WIN / AC_SR, raw);
   return raw.map(({ midi, start, dur, vel }) => ({ midi, start, dur, vel }));
+}
+
+let AC_SR = 48000;
+
+function findHits(frames, gate, notes) {
+  // spectral-flux onset detection with adaptive threshold.
+  // A hit must be a RISING edge (quiet -> loud), not a whistle attack
+  // and not a tone offset. Kicks are low, snare/hat split by duration.
+  const fluxMed = [];
+  const hits = [];
+  let lastHit = -1;
+  const nearNoteOnset = t => notes.some(n => Math.abs(t - n.start) < 0.12);
+  frames.forEach((fr, i) => {
+    fluxMed.push(fr.flux);
+    if (fluxMed.length > 24) fluxMed.shift();
+    const med = [...fluxMed].sort((a, b) => a - b)[Math.floor(fluxMed.length / 2)] || 0;
+    const thresh = Math.max(gate * 30, med * 3);
+    const prevRms = i > 0 ? frames[i - 1].rms : 0;
+    const rising = fr.rms > Math.max(prevRms * 1.6, gate * 1.5);
+    const strongTransient = fr.flux > thresh && fr.c < 0.6 && rising;
+    if (strongTransient && fr.t - lastHit > 0.09 && !nearNoteOnset(fr.t)) {
+      lastHit = fr.t;
+      // how long does it stay loud? (hat = very short)
+      let loudFrames = 0;
+      for (let j = i; j < Math.min(frames.length, i + 24); j++) {
+        if (frames[j].rms > gate * 1.2) loudFrames++;
+        else break;
+      }
+      // classify on the body (min centroid over next frames), not the attack click
+      let minCent = fr.centroid;
+      for (let j = i + 1; j < Math.min(frames.length, i + 4); j++) {
+        if (frames[j].centroid < minCent) minCent = frames[j].centroid;
+      }
+      let kind = "snare";
+      if (minCent < 1200) kind = "kick";
+      else if (loudFrames < 8) kind = "hat";
+      hits.push({ t: fr.t, kind, vel: Math.min(1, fr.rms / (gate * 4)) });
+    }
+  });
+  return hits;
+}
+
+/* ================= drums (synthesized, no samples) ================= */
+let noiseBuf = null;
+function getNoise(ac) {
+  if (noiseBuf) return noiseBuf;
+  noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+  const d = noiseBuf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  return noiseBuf;
+}
+function drumKick(ac, out, t, vel) {
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.frequency.setValueAtTime(160, t);
+  o.frequency.exponentialRampToValueAtTime(45, t + 0.11);
+  g.gain.setValueAtTime(0.9 * vel, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
+  o.connect(g); g.connect(out); o.start(t); o.stop(t + 0.3);
+}
+function drumSnare(ac, out, t, vel) {
+  const n = ac.createBufferSource(); n.buffer = getNoise(ac);
+  const bp = ac.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 1900; bp.Q.value = 0.8;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.6 * vel, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+  n.connect(bp); bp.connect(g); g.connect(out); n.start(t); n.stop(t + 0.2);
+  const o = ac.createOscillator(), g2 = ac.createGain();
+  o.frequency.value = 190;
+  g2.gain.setValueAtTime(0.35 * vel, t);
+  g2.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+  o.connect(g2); g2.connect(out); o.start(t); o.stop(t + 0.1);
+}
+function drumHat(ac, out, t, vel) {
+  const n = ac.createBufferSource(); n.buffer = getNoise(ac);
+  const hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 7500;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.32 * vel, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+  n.connect(hp); hp.connect(g); g.connect(out); n.start(t); n.stop(t + 0.08);
+}
+const DRUM_FN = { kick: drumKick, snare: drumSnare, hat: drumHat };
+const HIT_LABEL = { kick: "K", snare: "S", hat: "H" };
+const HIT_COLOR = { kick: "#ff6b6b", snare: "#ffb347", hat: "#6ee7a0" };
+
+function renderHits() {
+  const lane = $("hitLane");
+  if (!lane) return;
+  lane.innerHTML = "";
+  $("hitCount").textContent = hits.length;
+  if (!hits.length) { lane.style.display = "none"; return; }
+  lane.style.display = "flex";
+  const total = Math.max(...hits.map(h => h.t), ...notes.map(n => n.start + n.dur), 0.1);
+  for (const h of hits) {
+    const d = document.createElement("div");
+    d.className = "hit";
+    d.style.left = (h.t / total * 100).toFixed(2) + "%";
+    d.style.background = HIT_COLOR[h.kind];
+    d.title = h.kind + " " + h.t.toFixed(2) + "s";
+    d.textContent = HIT_LABEL[h.kind];
+    lane.appendChild(d);
+  }
 }
 
 /* ================= synth ================= */
@@ -1229,13 +1353,14 @@ function playNotes(list, instKey) {
   const ac = ensureCtx();
   stopPlayback();
   const cfg = INSTRUMENTS[instKey];
+  const master = ac.createGain(); master.gain.value = 0.9; master.connect(ac.destination);
   const osc = ac.createOscillator(); osc.type = cfg.type;
   const lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = cfg.cutoff; lp.Q.value = 2;
   const sh = ac.createWaveShaper(); setDrive(sh, cfg.drive);
   const g = ac.createGain(); g.gain.value = 0;
-  osc.connect(lp); lp.connect(sh); sh.connect(g); g.connect(ac.destination);
+  osc.connect(lp); lp.connect(sh); sh.connect(g); g.connect(master);
   osc.start();
-  synthNodes = { osc, g };
+  synthNodes = { osc, g, extra: [] };
   playing = true;
   $("playBtn").textContent = "Stop";
   const t0 = ac.currentTime + 0.08;
@@ -1244,13 +1369,18 @@ function playNotes(list, instKey) {
     const f = midi2hz(n.midi + (cfg.oct || 0));
     const st = t0 + n.start, en = st + Math.max(0.08, n.dur * 0.96);
     osc.frequency.setValueAtTime(f, st);
+    // blow-harder = brighter faster than louder (whistle-synth)
+    lp.frequency.setValueAtTime(cfg.cutoff * (0.5 + n.vel), st);
     g.gain.setValueAtTime(0.0001, st);
     g.gain.exponentialRampToValueAtTime(0.001 + 0.5 * n.vel, st + cfg.attack + 0.01);
     g.gain.setValueAtTime(0.001 + 0.5 * n.vel, Math.max(st + 0.02, en - 0.05));
     g.gain.exponentialRampToValueAtTime(0.0001, en);
     endT = Math.max(endT, en);
   }
-  g.gain.setValueAtTime(0.0001, endT + 0.05);
+  for (const h of hits) {
+    const fn = DRUM_FN[h.kind];
+    if (fn) { fn(ac, master, t0 + h.t, h.vel); endT = Math.max(endT, t0 + h.t + 0.3); }
+  }
   setTimeout(() => { if (playing) stopPlayback(); }, (endT - t0 + 0.3) * 1000);
 }
 function stopPlayback() {
@@ -1321,13 +1451,15 @@ function stopRecord() {
   let o = 0; for (const c of chunks) { rawBuffer.set(c, o); o += c.length; }
   setTimeout(() => {
     const t0 = performance.now();
-    notes = analyzeBuffer(rawBuffer, AC.sampleRate, curScale);
+    AC_SR = AC.sampleRate;
+    const res = analyzeTake(rawBuffer, AC.sampleRate, curScale);
+    notes = res.notes; hits = res.hits;
     const ms = (performance.now() - t0).toFixed(0);
-    $("status").textContent = "analyzed " + notes.length + " notes in " + ms + " ms";
-    renderNotes();
+    $("status").textContent = "analyzed " + notes.length + " notes, " + hits.length + " drum hits in " + ms + " ms";
+    renderNotes(); renderHits();
     $("notes").style.display = "block";
     $("playRow").style.display = "flex";
-    window.__whistlebox = { notes, get noteCount() { return notes.length; } };
+    window.__whistlebox = { notes, hits };
   }, 30);
 }
 function renderNotes() {
@@ -1359,7 +1491,11 @@ for (const k of Object.keys(SCALES)) {
   b.textContent = k; if (k === curScale) b.classList.add("sel");
   b.onclick = () => { curScale = k;
     [...$("scaleRow").children].forEach(x => x.classList.remove("sel")); b.classList.add("sel");
-    if (rawBuffer) { notes = analyzeBuffer(rawBuffer, AC.sampleRate, curScale); renderNotes(); } };
+    if (rawBuffer) {
+      AC_SR = AC.sampleRate;
+      const res = analyzeTake(rawBuffer, AC.sampleRate, curScale);
+      notes = res.notes; hits = res.hits; renderNotes(); renderHits();
+    } };
   $("scaleRow").appendChild(b);
 }
 $("recBtn").onclick = toggleRecord;
@@ -1368,15 +1504,16 @@ $("againBtn").onclick = () => {
   $("notes").style.display = "none"; $("playRow").style.display = "none";
   $("timer").textContent = "0:00"; $("status").textContent = "tap record and whistle a tune";
   $("meterFill").style.width = "0%";
-  notes = []; rawBuffer = null;
+  notes = []; hits = []; rawBuffer = null;
 };
 $("playBtn").onclick = () => { playing ? stopPlayback() : playNotes(notes, curInst); };
 $("origBtn").onclick = playOriginal;
 
-/* ================= headless test: synthetic melody ================= */
-if (TEST_MODE === "melody") {
+/* ================= headless test: synthetic melody + beatbox ================= */
+if (TEST_MODE === "duet") {
   (function () {
-    const sr = 48000, mk = (f, s) => {
+    const sr = 48000;
+    const mkTone = (f, s) => {
       const n = Math.floor(sr * s), b = new Float32Array(n);
       for (let i = 0; i < n; i++) {
         const t = i / sr;
@@ -1385,17 +1522,37 @@ if (TEST_MODE === "melody") {
       }
       return b;
     };
-    const parts = [mk(440, 0.5), new Float32Array(Math.floor(sr * 0.15)), mk(523.25, 0.5),
-                   new Float32Array(Math.floor(sr * 0.15)), mk(659.25, 0.6)];
+    const mkKick = () => { // low thump: pitch-dropping sine
+      const n = Math.floor(sr * 0.18), b = new Float32Array(n);
+      let ph = 0;
+      for (let i = 0; i < n; i++) {
+        const f = 150 * Math.pow(45 / 150, i / n);
+        ph += 2 * Math.PI * f / sr;
+        b[i] = 0.8 * Math.sin(ph) * Math.exp(-i / (sr * 0.05));
+      }
+      return b;
+    };
+    const mkSnare = () => { // noise burst
+      const n = Math.floor(sr * 0.12), b = new Float32Array(n);
+      for (let i = 0; i < n; i++) b[i] = 0.5 * (Math.random() * 2 - 1) * Math.exp(-i / (sr * 0.03));
+      return b;
+    };
+    const sil = s => new Float32Array(Math.floor(sr * s));
+    // timeline: kick, A4, snare, C5, kick, E5, snare (leading silence like a real take)
+    const parts = [sil(0.3), mkKick(), sil(0.25), mkTone(440, 0.4), sil(0.12), mkSnare(), sil(0.2),
+                   mkTone(523.25, 0.4), sil(0.12), mkKick(), sil(0.25), mkTone(659.25, 0.5),
+                   sil(0.12), mkSnare()];
     let len = 0; parts.forEach(p => len += p.length);
     const buf = new Float32Array(len);
     let o = 0; parts.forEach(p => { buf.set(p, o); o += p.length; });
     rawBuffer = buf;
-    notes = analyzeBuffer(buf, sr, "Chromatic");
-    window.__whistlebox = { notes, get noteCount() { return notes.length; } };
-    renderNotes();
+    AC_SR = sr;
+    const res = analyzeTake(buf, sr, "Chromatic");
+    notes = res.notes; hits = res.hits;
+    window.__whistlebox = { notes, hits };
+    renderNotes(); renderHits();
     $("notes").style.display = "block";
-    $("status").textContent = "test melody analyzed: " + notes.length + " notes";
+    $("status").textContent = "test duet: " + notes.length + " notes, " + hits.length + " hits";
   })();
 }
 </script>
