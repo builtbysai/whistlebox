@@ -64,6 +64,7 @@
     <div class="row">
       <button id="startBtn">Start microphone</button>
       <label>Level <span id="levelVal">—</span></label>
+      <button id="capBtn" disabled>● Capture MIDI</button>
     </div>
     <div class="row">
       <label>Stickiness <input type="range" id="stick" min="0" max="100" value="35"></label>
@@ -75,6 +76,14 @@
     <h3>Pitch → MIDI</h3>
     <canvas id="noteWheel" width="300" height="300"></canvas>
     <div class="row" style="justify-content:center; margin-top:8px;">
+      <label><input type="checkbox" id="chordsOn"> chords</label>
+      <label>Chord set
+        <select id="chordSet">
+          <option value="triad">Triads</option>
+          <option value="pop">Pop</option>
+          <option value="power">Power</option>
+        </select>
+      </label>
       <label>Mode
         <select id="bendMode">
           <option value="intelli">IntelliBend (anchored)</option>
@@ -126,6 +135,9 @@
       <label>Scale <select id="scaleSel">
         <option>Chromatic</option><option>Major</option><option>Minor</option>
         <option>Pentatonic</option><option>Blues</option><option>Dorian</option>
+        <option>Phrygian</option><option>Lydian</option><option>Mixolydian</option>
+        <option>Locrian</option><option>HarmonicMinor</option><option>MelodicMinor</option>
+        <option>WholeTone</option><option>Diminished</option>
       </select></label>
       <label>Root <select id="rootSel"></select></label>
       <button id="detectKeyBtn">Detect from singing</button>
@@ -1212,7 +1224,9 @@ class VoicePitchProcessor extends AudioWorkletProcessor {
       f = r[0]; c = r[1];
     }
     // spectral features for triggers / vowel
-    let centroid = 0, flux = 0;
+    let centroid = 0, flux = 0, rolloff = 0, zcr = 0;
+    for (let j = 1; j < WIN; j++) if ((w[j] >= 0) !== (w[j-1] >= 0)) zcr++;
+    zcr /= WIN;
     if (this.fft) {
       const rIn = new Float32Array(WIN);
       const cOut = new Array(WIN * 2);
@@ -1227,10 +1241,18 @@ class VoicePitchProcessor extends AudioWorkletProcessor {
         mag[j] = m; sM += m; sF += m * j;
         if (this.prevMag) { const d = m - this.prevMag[j]; if (d > 0) flux += d; }
       }
-      if (sM > 1e-9) centroid = (sF / sM) * sr / WIN;
+      if (sM > 1e-9) {
+        centroid = (sF / sM) * sr / WIN;
+        // rolloff: bin below which 85% of energy sits
+        let acc = 0;
+        for (let j = 1; j < NB; j++) {
+          acc += mag[j];
+          if (acc >= sM * 0.85) { rolloff = j * sr / WIN; break; }
+        }
+      }
       this.prevMag = mag;
     }
-    this.port.postMessage({ type: 'frame', f, c, rms, centroid, flux });
+    this.port.postMessage({ type: 'frame', f, c, rms, centroid, flux, rolloff, zcr });
   }
 
   process(inputs) {
@@ -1260,7 +1282,11 @@ const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const SCALES = {
   Chromatic: [0,1,2,3,4,5,6,7,8,9,10,11],
   Major: [0,2,4,5,7,9,11], Minor: [0,2,3,5,7,8,10],
-  Pentatonic: [0,2,4,7,9], Blues: [0,3,5,6,7,10], Dorian: [0,2,3,5,7,9,10]
+  Pentatonic: [0,2,4,7,9], Blues: [0,3,5,6,7,10], Dorian: [0,2,3,5,7,9,10],
+  Phrygian: [0,1,3,5,7,8,10], Lydian: [0,2,4,6,7,9,11],
+  Mixolydian: [0,2,4,5,7,9,10], Locrian: [0,1,3,5,6,8,10],
+  HarmonicMinor: [0,2,3,5,7,8,11], MelodicMinor: [0,2,3,5,7,9,11],
+  WholeTone: [0,2,4,6,8,10], Diminished: [0,2,3,5,6,8,9,11]
 };
 const state = {
   running: false, ac: null, worklet: null, micStream: null,
@@ -1302,6 +1328,7 @@ async function startMic() {
   $('startBtn').textContent = 'Stop';
   $('startBtn').onclick = stopMic;
   $('trainBtn').disabled = false;
+  $('capBtn').disabled = false;
   $('status').textContent = 'listening… sing a note or tap a trained pad sound';
   initSynth();
 }
@@ -1316,6 +1343,7 @@ function stopMic() {
   $('startBtn').textContent = 'Start microphone';
   $('startBtn').onclick = startMic;
   $('trainBtn').disabled = true;
+  $('capBtn').disabled = true;
   $('status').textContent = 'stopped';
 }
 $('startBtn').onclick = startMic;
@@ -1367,6 +1395,16 @@ function midiSend(bytes) {
 function noteOn(midi, vel) {
   midiSend([0x90 | state.midiCh, midi, Math.round(vel * 127)]);
   synthNoteOn(midi, vel);
+  // chords mode: stack a chord on a separate channel
+  if ($('chordsOn').checked) {
+    const set = $('chordSet').value;
+    const iv = set === 'triad' ? [4, 7] : set === 'pop' ? [4, 7, 11] : [7, 12];
+    const ch2 = (state.midiCh + 1) % 16;
+    state.chordNotes = iv.map(i => midi + i);
+    for (const cm of state.chordNotes) {
+      midiSend([0x90 | ch2, cm, Math.round(vel * 100)]);
+    }
+  }
   const log = $('midiLog');
   const s = document.createElement('span'); s.className = 'midi-note';
   s.textContent = NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
@@ -1375,6 +1413,11 @@ function noteOn(midi, vel) {
 }
 function noteOff(midi) {
   midiSend([0x80 | state.midiCh, midi, 0]);
+  if (state.chordNotes) {
+    const ch2 = (state.midiCh + 1) % 16;
+    for (const cm of state.chordNotes) midiSend([0x80 | ch2, cm, 0]);
+    state.chordNotes = null;
+  }
   synthNoteOff();
 }
 function pitchBend(semitones) {
@@ -1515,7 +1558,8 @@ function drawMeters(d) {
 function initPads() {
   const wrap = $('pads'); wrap.innerHTML = '';
   const sel = $('trainPad'); sel.innerHTML = '';
-  const defaults = [['kick', 36], ['snare', 38], ['hat', 42], ['clap', 39]];
+  const defaults = [['kick', 36], ['snare', 38], ['hat', 42], ['clap', 39],
+                    ['tom', 43], ['rim', 37], ['shaker', 44], ['snap', 40]];
   state.pads = defaults.map(([name, midi], i) => ({ name, midi, takes: [], trained: false }));
   state.pads.forEach((p, i) => {
     const d = document.createElement('div'); d.className = 'pad'; d.id = 'pad' + i;
@@ -1527,6 +1571,14 @@ function initPads() {
 initPads();
 
 let onsetBuf = [];
+/* k-NN trigger classifier on [centroid, rolloff, zcr] with per-feature
+   normalization from the training takes. k=3, majority vote. */
+function featVec(d) { return [d.centroid / 8000, d.rolloff / 12000, d.zcr * 4]; }
+function featDist(a, b) {
+  let s = 0;
+  for (let i = 0; i < 3; i++) { const dd = a[i] - b[i]; s += dd * dd; }
+  return Math.sqrt(s);
+}
 function checkTriggers(d) {
   // flux-based onset; classify against trained pad templates
   onsetBuf.push(d);
@@ -1538,20 +1590,25 @@ function checkTriggers(d) {
     const now = performance.now();
     if (now - state.lastOnset < 120) return true;
     state.lastOnset = now;
-    // nearest template by centroid
-    let best = null, bestD = 1e9;
-    for (const p of trained) {
-      const tc = p.takes.reduce((s, t) => s + t.centroid, 0) / p.takes.length;
-      const dd = Math.abs(tc - d.centroid);
-      if (dd < bestD) { bestD = dd; best = p; }
-    }
-    if (best && bestD < 2500) {
+    // k-NN over all takes
+    const fv = featVec(d);
+    const votes = [];
+    for (const p of trained) for (const t of p.takes) votes.push({ p, d: featDist(fv, t.fv) });
+    votes.sort((a, b) => a.d - b.d);
+    const k = Math.min(3, votes.length);
+    const tally = {};
+    for (let i = 0; i < k; i++) tally[votes[i].p.name] = (tally[votes[i].p.name] || 0) + 1;
+    const winName = Object.entries(tally).sort((a, b) => b[1] - a[1])[0][0];
+    const best = trained.find(p => p.name === winName);
+    // confidence: nearest distance must be reasonably close
+    if (best && votes[0].d < 1.2) {
       const idx = state.pads.indexOf(best);
       const el = $('pad' + idx);
       el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 120);
       const vel = Math.min(1, d.rms * 5);
       midiSend([0x90 | state.midiCh, best.midi, Math.round(vel * 127)]);
-      setTimeout(() => midiSend([0x80 | state.midiCh, best.midi, 0]), 90);
+      capEvent('on', best.midi, vel);
+      setTimeout(() => { midiSend([0x80 | state.midiCh, best.midi, 0]); capEvent('off', best.midi, 0); }, 90);
       if ($('useSynth').checked) playPadSound(best.name, vel);
       return true;
     }
@@ -1600,7 +1657,7 @@ checkTriggers = function (d) {
       const now = performance.now();
       if (now - tr.lastTake > 250) {
         tr.lastTake = now;
-        tr.takes.push({ centroid: d.centroid });
+        tr.takes.push({ fv: featVec(d) });
         $('trainStatus').textContent = 'take ' + tr.takes.length + ' / 5';
         if (tr.takes.length >= 5) {
           tr.pad.takes = tr.takes; tr.pad.trained = true;
@@ -1634,7 +1691,60 @@ $('detectKeyBtn').onclick = () => {
   $('keyResult').textContent = 'most sung: ' + NOTE_NAMES[top] + ' — try ' + NOTE_NAMES[top] + ' Major or Minor.';
 };
 
-/* ================= test hooks ================= */
+/* ================= MIDI capture → .mid download ================= */
+let capturing = false, capEvents = [], capStart = 0;
+$('capBtn').onclick = () => {
+  if (!capturing) {
+    capturing = true; capEvents = []; capStart = performance.now();
+    $('capBtn').textContent = '■ Stop & download MIDI';
+    $('status').textContent = 'capturing MIDI… perform, then stop';
+  } else {
+    capturing = false;
+    $('capBtn').textContent = '● Capture MIDI';
+    $('status').textContent = 'MIDI captured: ' + capEvents.length + ' events';
+    downloadMidi();
+  }
+};
+function capEvent(type, midi, vel) {
+  if (!capturing) return;
+  capEvents.push({ t: performance.now() - capStart, type, midi, vel });
+}
+// hook into noteOn/noteOff
+const _noteOn = noteOn, _noteOff = noteOff;
+noteOn = function (midi, vel) { capEvent('on', midi, vel); _noteOn(midi, vel); };
+noteOff = function (midi) { capEvent('off', midi, 0); _noteOff(midi); };
+
+function downloadMidi() {
+  // minimal single-track MIDI file, 480 ticks/beat, 120bpm
+  const TPB = 480;
+  const evs = capEvents.map(e => ({ tick: Math.round(e.t / 500 * TPB), type: e.type, midi: e.midi, vel: e.vel }));
+  evs.sort((a, b) => a.tick - b.tick);
+  const track = [];
+  const varlen = v => {
+    const b = [v & 0x7f]; v >>= 7;
+    while (v) { b.unshift((v & 0x7f) | 0x80); v >>= 7; }
+    for (let i = 0; i < b.length - 1; i++) b[i] |= 0x80;
+    return b;
+  };
+  let last = 0;
+  for (const e of evs) {
+    track.push(...varlen(e.tick - last));
+    last = e.tick;
+    if (e.type === 'on') track.push(0x90, e.midi, Math.round(e.vel * 127));
+    else track.push(0x80, e.midi, 0);
+  }
+  track.push(...varlen(0), 0xff, 0x2f, 0x00);
+  const hdr = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, TPB >> 8, TPB & 0xff];
+  const trk = [0x4d, 0x54, 0x72, 0x6b,
+    (track.length >> 24) & 0xff, (track.length >> 16) & 0xff, (track.length >> 8) & 0xff, track.length & 0xff,
+    ...track];
+  const blob = new Blob([new Uint8Array([...hdr, ...trk])], { type: 'audio/midi' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'voxmidi-capture.mid';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
 window.__vox = { state, snapToScale, hz2midi };
 </script>
 </body>
