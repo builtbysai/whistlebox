@@ -48,7 +48,7 @@
 <body>
 <header>
   <h1>VOXMIDI</h1>
-  <p>your voice is the MIDI controller · v0.1</p>
+  <p>your voice is the MIDI controller · v0.6</p>
 </header>
 
 <div class="tabs">
@@ -191,7 +191,7 @@
 "use strict";
 // pitchy vendored into worklet
 // fft vendored into worklet
-const WORKLET_SRC = `import FFT from "fft.js";
+const WORKLET_SRC = `
 
 /**
  * @typedef {Float32Array | Float64Array | number[]} Buffer One of the supported
@@ -208,7 +208,7 @@ const WORKLET_SRC = `import FFT from "fft.js";
  * autocorrelation process can be any array-like type, the output buffer
  * (whether provided explicitly or using a fresh buffer) is always of this type.
  */
-export class Autocorrelator {
+class Autocorrelator {
   /** @private @readonly @type {number} */
   _inputLength;
   /** @private @type {FFT} */
@@ -442,7 +442,7 @@ function refineResultIndex(index, data) {
  * @template {Buffer} T the buffer type to use internally. Inputs to the
  * pitch-detection process can be any numeric array type.
  */
-export class PitchDetector {
+class PitchDetector {
   /** @private @type {Autocorrelator<T>} */
   _autocorrelator;
   /** @private @type {T} */
@@ -740,7 +740,7 @@ function FFT(size) {
   this._data = null;
   this._inv = 0;
 }
-module.exports = FFT;
+
 
 FFT.prototype.fromComplexArray = function fromComplexArray(complex, storage) {
   var res = storage || new Array(complex.length >>> 1);
@@ -1366,7 +1366,7 @@ function stopMic() {
   try { state.worklet.disconnect(); } catch (e) {}
   try { state.ac.close(); } catch (e) {}
   state.ac = null;
-  if (state.curNote >= 0) noteOff(state.curNote);
+  if (state.curNote >= 0) { noteOff(state.curNote); state.curNote = -1; }
   $('startBtn').textContent = 'Start microphone';
   $('startBtn').onclick = startMic;
   $('trainBtn').disabled = true;
@@ -1441,6 +1441,7 @@ function noteOn(midi, vel) {
 }
 function noteOff(midi) {
   midiSend([0x80 | state.midiCh, midi, 0]);
+  lastBendVal = -1; // reset bend so next note starts clean
   if (state.chordNotes) {
     const ch2 = (state.midiCh + 1) % 16;
     for (const cm of state.chordNotes) midiSend([0x80 | ch2, cm, 0]);
@@ -1448,9 +1449,13 @@ function noteOff(midi) {
   }
   synthNoteOff();
 }
+let lastBendVal = -1;
 function pitchBend(semitones) {
   const v = Math.max(-1, Math.min(1, semitones / state.bendRange));
   const val = Math.round(8192 + v * 8191);
+  // only send when the bend actually moved (14-bit threshold)
+  if (Math.abs(val - lastBendVal) < 40) return;
+  lastBendVal = val;
   midiSend([0xE0 | state.midiCh, val & 0x7f, (val >> 7) & 0x7f]);
 }
 function sendCC(cc, val) {
@@ -1471,6 +1476,10 @@ function snapToScale(mf) {
   return best;
 }
 let smoothF = 0;
+// note hysteresis: require stable frames before on/off/change
+let pendingNote = -1, pendingCount = 0;
+const ATTACK_FRAMES = 5, RELEASE_FRAMES = 10;
+let releaseCount = 0;
 function onFrame(e) {
   const d = e.data;
   if (d.type !== 'frame') return;
@@ -1483,9 +1492,15 @@ function onFrame(e) {
 
   const tone = d.c >= 0.82 && d.rms > noiseFloor && d.f > 60 && d.f < 4000;
   if (!tone) {
-    if (state.curNote >= 0 && d.rms < noiseFloor * 0.5) { noteOff(state.curNote); state.curNote = -1; }
+    pendingNote = -1; pendingCount = 0;
+    if (state.curNote >= 0 && d.rms < noiseFloor * 0.5) {
+      if (++releaseCount >= RELEASE_FRAMES) {
+        noteOff(state.curNote); state.curNote = -1; releaseCount = 0;
+      }
+    } else releaseCount = 0;
     return;
   }
+  releaseCount = 0;
   // stickiness: smooth frequency
   const a = 1 - state.stickiness * 0.9;
   smoothF = smoothF ? smoothF + a * (d.f - smoothF) : d.f;
@@ -1501,10 +1516,22 @@ function onFrame(e) {
     if (Math.abs(semis) < state.bendRange) pitchBend(semis);
   }
 
-  if (target !== state.curNote) {
+  // hysteresis: target must be stable for ATTACK_FRAMES before we commit.
+  // semitone hysteresis around the current note scales with stickiness:
+  // a singing note has to move decisively before we let go of it.
+  if (state.curNote >= 0) {
+    const hyst = 0.35 + state.stickiness * 0.9;
+    if (Math.abs(mf - state.curNote) < hyst) {
+      pendingNote = state.curNote; pendingCount = ATTACK_FRAMES;
+    }
+  }
+  if (target !== pendingNote) { pendingNote = target; pendingCount = 1; }
+  else pendingCount++;
+  if (pendingCount >= ATTACK_FRAMES && target !== state.curNote) {
     if (state.curNote >= 0) noteOff(state.curNote);
     state.curNote = target;
     noteOn(target, Math.min(1, d.rms * 6));
+    pendingCount = 0;
     state.keyBuf.push(target % 12);
     if (state.keyBuf.length > 32) state.keyBuf.shift();
   } else {
@@ -1616,13 +1643,23 @@ function checkTriggers(d) {
   if (onsetBuf.length > 30) onsetBuf.shift();
   const trained = state.pads.filter(p => p.trained);
   if (!trained.length || !state.running) return false;
-  const med = [...onsetBuf].map(x => x.flux).sort((a, b) => a - b)[Math.floor(onsetBuf.length / 2)] || 0;
-  if (d.flux > Math.max(0.5, med * 3) && d.c < 0.6 && d.rms > 0.03) {
+  // fixed flux threshold: percussive onsets are orders of magnitude above
+  // the room-noise floor. Adaptive med*3 missed soft kicks after loud hats.
+  if (d.flux > 8 && d.c < 0.6 && d.rms > 0.03) {
     const now = performance.now();
-    if (now - state.lastOnset < 120) return true;
-    state.lastOnset = now;
+    // if we're mid-window, keep collecting regardless of debounce
+    if (state.onsetWin && state.onsetWin.length > 0) {
+      state.onsetWin.push(featVec(d));
+    } else {
+      if (now - state.lastOnset < 120) return true;
+      state.lastOnset = now;
+      state.onsetWin = [featVec(d)];
+    }
+    if (state.onsetWin.length < 4) return true; // collecting
+    const fv = [0, 1, 2].map(i =>
+      state.onsetWin.reduce((s, v) => s + v[i], 0) / state.onsetWin.length);
+    state.onsetWin = [];
     // k-NN over all takes
-    const fv = featVec(d);
     const votes = [];
     for (const p of trained) for (const t of p.takes) votes.push({ p, d: featDist(fv, t.fv) });
     votes.sort((a, b) => a.d - b.d);
@@ -1682,13 +1719,22 @@ const origCheck = checkTriggers;
 checkTriggers = function (d) {
   const tr = state.training;
   if (tr && state.running) {
-    onsetBuf.push(d); if (onsetBuf.length > 30) onsetBuf.shift();
-    const med = [...onsetBuf].map(x => x.flux).sort((a, b) => a - b)[Math.floor(onsetBuf.length / 2)] || 0;
-    if (d.flux > Math.max(0.5, med * 3) && d.c < 0.6 && d.rms > 0.03) {
+    if (d.flux > 8 && d.c < 0.6 && d.rms > 0.03) {
       const now = performance.now();
-      if (now - tr.lastTake > 250) {
-        tr.lastTake = now;
-        tr.takes.push({ fv: featVec(d) });
+      // if we're mid-window, keep collecting regardless of debounce
+      if (tr.win && tr.win.length > 0) {
+        tr.win.push(featVec(d));
+      } else {
+        if (now - tr.lastTake > 250) {
+          tr.lastTake = now;
+          tr.win = [featVec(d)];
+        } else return true;
+      }
+      // average over a short window for stable features (same as classification)
+      if (tr.win.length >= 4) {
+        const fv = [0, 1, 2].map(i => tr.win.reduce((s, v) => s + v[i], 0) / tr.win.length);
+        tr.win = [];
+        tr.takes.push({ fv });
         $('trainStatus').textContent = 'take ' + tr.takes.length + ' / 5';
         if (tr.takes.length >= 5) {
           tr.pad.takes = tr.takes; tr.pad.trained = true;
