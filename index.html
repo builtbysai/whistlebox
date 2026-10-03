@@ -1,85 +1,665 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Whistlebox — record, then play it as instruments</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%231e3a2f' stroke='%233a7d5d' stroke-width='2'/><text x='16' y='21' font-size='14' text-anchor='middle' fill='%23c8f0d8'>V</text></svg>">
+<title>VoxMIDI — voice to MIDI controller</title>
 <style>
-  :root { --bg: #0d0f14; --panel: #161a23; --ink: #e8e6df; --dim: #8a8fa0;
-          --acc: #ffb347; --acc2: #6ee7a0; --bad: #ff6b6b; }
-  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-  html, body { height: 100%; }
-  body { background: var(--bg); color: var(--ink); font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-         display: flex; flex-direction: column; align-items: center; min-height: 100dvh;
-         padding: 20px 16px 28px; overflow-x: hidden; }
-  header { text-align: center; margin-bottom: 14px; }
-  header h1 { font-size: 26px; letter-spacing: 2px; font-weight: 800; }
-  header h1 span { color: var(--acc); }
-  header p { color: var(--dim); font-size: 13px; margin-top: 4px; }
-  #stage { width: min(480px, 100%); background: var(--panel); border-radius: 18px; padding: 22px 20px;
-           box-shadow: 0 12px 40px rgba(0,0,0,.45); }
-  #timer { font-size: 44px; font-weight: 800; text-align: center; font-variant-numeric: tabular-nums; min-height: 56px; }
-  #status { text-align: center; color: var(--dim); font-size: 13px; min-height: 20px; margin-bottom: 6px; }
-  #meter { height: 10px; background: #0a0c10; border-radius: 6px; overflow: hidden; margin: 10px 0 4px; }
-  #meterFill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--acc2), var(--acc)); border-radius: 6px; }
-  .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-  .row label { font-size: 11px; color: var(--dim); width: 100%; text-transform: uppercase; letter-spacing: 1px; }
-  button { font: inherit; color: var(--ink); background: #222839; border: 1px solid #2e3650; border-radius: 12px;
-           padding: 10px 14px; cursor: pointer; font-weight: 600; font-size: 14px; flex: 1; min-width: 0; }
-  button:active { transform: scale(.97); }
-  button.sel { background: var(--acc); border-color: var(--acc); color: #201503; }
-  button:disabled { opacity: .45; cursor: default; }
-  #recBtn { font-size: 18px; padding: 16px; margin-top: 12px; width: 100%; background: var(--bad);
-            border-color: var(--bad); color: #2b0d0d; }
-  #recBtn.recording { animation: pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
-  #notes { margin-top: 14px; display: none; }
-  #noteStrip { display: flex; gap: 4px; align-items: flex-end; min-height: 64px; margin-top: 8px;
-               background: #0a0c10; border-radius: 10px; padding: 10px; overflow-x: auto; }
-  #hitLane { position: relative; height: 30px; margin-top: 6px; background: #0a0c10;
-             border-radius: 8px; display: none; }
-  .hit { position: absolute; top: 5px; width: 20px; height: 20px; border-radius: 50%;
-         font-size: 10px; font-weight: 800; color: #0d0f14; display: flex;
-         align-items: center; justify-content: center; transform: translateX(-50%); }
-  .nbar { background: linear-gradient(180deg, var(--acc), #d98a2b); border-radius: 5px 5px 2px 2px;
-          min-width: 26px; display: flex; align-items: flex-end; justify-content: center;
-          padding-bottom: 4px; font-size: 10px; font-weight: 700; color: #201503; flex: none; }
-  #playRow { display: none; }
-  #err { margin-top: 10px; font-size: 13px; color: var(--bad); text-align: center; display: none; }
-  #hint { margin-top: 12px; font-size: 12px; color: var(--dim); text-align: center; line-height: 1.5; }
-  @media (max-width: 380px) { #timer { font-size: 36px; } }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #0d0f14; color: #e8eaf0;
+         min-height: 100vh; padding: 16px; }
+  header { text-align: center; margin-bottom: 12px; }
+  header h1 { font-size: 22px; letter-spacing: 2px; }
+  header p { color: #8a90a0; font-size: 13px; margin-top: 4px; }
+  .tabs { display: flex; gap: 6px; justify-content: center; margin-bottom: 14px; flex-wrap: wrap; }
+  .tab { padding: 8px 18px; border-radius: 8px; border: 1px solid #2a2e3a; background: #14161d;
+         color: #aab; cursor: pointer; font-size: 14px; }
+  .tab.active { background: #1e3a2f; border-color: #3a7d5d; color: #c8f0d8; }
+  .page { display: none; max-width: 900px; margin: 0 auto; }
+  .page.active { display: block; }
+  .card { background: #14161d; border: 1px solid #23262f; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .card h3 { font-size: 14px; color: #9aa; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  label { font-size: 13px; color: #9aa; }
+  select, input[type=range] { background: #0a0c10; color: #e8eaf0; border: 1px solid #2a2e3a;
+                              border-radius: 6px; padding: 6px 10px; font-size: 14px; }
+  button { background: #1e3a2f; color: #c8f0d8; border: 1px solid #3a7d5d; border-radius: 8px;
+           padding: 10px 20px; font-size: 15px; cursor: pointer; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.danger { background: #3a1e1e; border-color: #7d3a3a; color: #f0c8c8; }
+  #noteWheel { display: block; margin: 0 auto; cursor: pointer; }
+  .meters { display: flex; gap: 12px; justify-content: center; margin-top: 10px; }
+  .meter { text-align: center; }
+  .meter canvas { display: block; }
+  .meter span { font-size: 12px; color: #9aa; }
+  .pads { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .pad { aspect-ratio: 1; border-radius: 12px; border: 2px solid #2a2e3a; background: #14161d;
+         display: flex; flex-direction: column; align-items: center; justify-content: center;
+         cursor: pointer; font-size: 13px; color: #9aa; }
+  .pad.trained { border-color: #3a7d5d; color: #c8f0d8; }
+  .pad.hit { background: #1e3a2f; transform: scale(0.96); }
+  .pad .pname { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+  #status { text-align: center; color: #8a90a0; font-size: 13px; margin-top: 10px; min-height: 20px; }
+  .midi-note { display: inline-block; padding: 2px 8px; background: #1e3a2f; border-radius: 4px;
+               margin: 2px; font-size: 13px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>WHISTLE<span>BOX</span></h1>
-  <p>record your whistle, hear it as instruments. v0.3</p>
+  <h1>VOXMIDI</h1>
+  <p>your voice is the MIDI controller · v0.1</p>
 </header>
-<div id="stage">
-  <div id="timer">0:00</div>
-  <div id="status">tap record and whistle a tune</div>
-  <div id="meter"><div id="meterFill"></div></div>
-  <button id="recBtn">Record</button>
 
-  <div id="notes">
-    <div class="row"><label>what we heard (<span id="noteCount">0</span> notes, <span id="hitCount">0</span> drum hits)</label></div>
-    <div id="noteStrip"></div>
-    <div id="hitLane"></div>
-    <div class="row" id="instRow"><label>instrument</label></div>
-    <div class="row" id="scaleRow"><label>scale</label></div>
-    <div class="row" id="playRow">
-      <button id="playBtn">Play as instrument</button>
-      <button id="origBtn">Hear original</button>
+<div class="tabs">
+  <div class="tab active" data-page="play">Play</div>
+  <div class="tab" data-page="train">Train</div>
+  <div class="tab" data-page="key">Key</div>
+  <div class="tab" data-page="midi">MIDI</div>
+</div>
+
+<div class="page active" id="page-play">
+  <div class="card">
+    <h3>Input</h3>
+    <div class="row">
+      <button id="startBtn">Start microphone</button>
+      <label>Level <span id="levelVal">—</span></label>
     </div>
-    <div class="row"><button id="againBtn">Record again</button></div>
+    <div class="row">
+      <label>Stickiness <input type="range" id="stick" min="0" max="100" value="35"></label>
+      <label><input type="checkbox" id="useSynth" checked> internal synth</label>
+    </div>
+    <div id="status">click Start, allow the mic, then sing or beatbox</div>
   </div>
+  <div class="card">
+    <h3>Pitch → MIDI</h3>
+    <canvas id="noteWheel" width="300" height="300"></canvas>
+    <div class="row" style="justify-content:center; margin-top:8px;">
+      <label>Mode
+        <select id="bendMode">
+          <option value="intelli">IntelliBend (anchored)</option>
+          <option value="true">TruBend (follow voice)</option>
+          <option value="off">Bend off</option>
+        </select>
+      </label>
+      <label>Bend range <select id="bendRange">
+        <option>1</option><option selected>2</option><option>4</option><option>12</option>
+      </select> st</label>
+    </div>
+    <div id="midiLog" style="text-align:center; margin-top:8px;"></div>
+  </div>
+  <div class="card">
+    <h3>Vowel → CC</h3>
+    <div class="meters">
+      <div class="meter"><canvas id="mAaa" width="64" height="64"></canvas><span>aaa → <span id="ccAaa">74</span></span></div>
+      <div class="meter"><canvas id="mOoo" width="64" height="64"></canvas><span>ooo → <span id="ccOoo">71</span></span></div>
+      <div class="meter"><canvas id="mEee" width="64" height="64"></canvas><span>eee → <span id="ccEee">76</span></span></div>
+      <div class="meter"><canvas id="mEnv" width="64" height="64"></canvas><span>env → <span id="ccEnv">11</span></span></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Trigger pads</h3>
+    <div class="pads" id="pads"></div>
+  </div>
+</div>
 
-  <div id="err"></div>
-  <div id="hint">No headphones needed. Record first, pick an instrument, then play it back.</div>
+<div class="page" id="page-train">
+  <div class="card">
+    <h3>Train a trigger sound</h3>
+    <div class="row">
+      <label>Pad <select id="trainPad"></select></label>
+      <label>Name <input type="text" id="padName" value="kick" style="width:90px"></label>
+      <label>MIDI note <input type="number" id="padMidi" value="36" min="0" max="127" style="width:64px"></label>
+    </div>
+    <div class="row">
+      <button id="trainBtn" disabled>Record 5 takes</button>
+      <span id="trainStatus" style="font-size:13px; color:#9aa;"></span>
+    </div>
+    <p style="font-size:13px; color:#8a90a0;">Make your sound 5 times into the mic, about half a second apart. Keep each trigger sound as distinct as possible.</p>
+  </div>
+</div>
+
+<div class="page" id="page-key">
+  <div class="card">
+    <h3>Scale &amp; key</h3>
+    <div class="row">
+      <label>Scale <select id="scaleSel">
+        <option>Chromatic</option><option>Major</option><option>Minor</option>
+        <option>Pentatonic</option><option>Blues</option><option>Dorian</option>
+      </select></label>
+      <label>Root <select id="rootSel"></select></label>
+      <button id="detectKeyBtn">Detect from singing</button>
+    </div>
+    <div id="keyResult" style="font-size:13px; color:#9aa;"></div>
+  </div>
+</div>
+
+<div class="page" id="page-midi">
+  <div class="card">
+    <h3>MIDI output</h3>
+    <div class="row">
+      <label>Output <select id="midiOut"><option value="">(no MIDI — internal synth only)</option></select></label>
+      <button id="midiBtn">Enable MIDI</button>
+    </div>
+    <div class="row">
+      <label>Channel <select id="midiCh"></select></label>
+    </div>
+    <p style="font-size:13px; color:#8a90a0;">Chrome desktop only. Route to your DAW with a virtual MIDI port (IAC bus on Mac, loopMIDI on Windows), then select it above.</p>
+    <div id="midiStatus" style="font-size:13px; color:#9aa;"></div>
+  </div>
 </div>
 
 <script>
 "use strict";
+// pitchy vendored into worklet
+// fft vendored into worklet
+const WORKLET_SRC = `import FFT from "fft.js";
+
+/**
+ * @typedef {Float32Array | Float64Array | number[]} Buffer One of the supported
+ * buffer types. Other numeric array types may not work correctly.
+ */
+
+/**
+ * A class that can perform autocorrelation on input arrays of a given size.
+ *
+ * The class holds internal buffers so that no additional allocations are
+ * necessary while performing the operation.
+ *
+ * @template {Buffer} T the buffer type to use. While inputs to the
+ * autocorrelation process can be any array-like type, the output buffer
+ * (whether provided explicitly or using a fresh buffer) is always of this type.
+ */
+export class Autocorrelator {
+  /** @private @readonly @type {number} */
+  _inputLength;
+  /** @private @type {FFT} */
+  _fft;
+  /** @private @type {(size: number) => T} */
+  _bufferSupplier;
+  /** @private @type {T} */
+  _paddedInputBuffer;
+  /** @private @type {T} */
+  _transformBuffer;
+  /** @private @type {T} */
+  _inverseBuffer;
+
+  /**
+   * A helper method to create an {@link Autocorrelator} using
+   * {@link Float32Array} buffers.
+   *
+   * @param inputLength {number} the input array length to support
+   * @returns {Autocorrelator<Float32Array>}
+   */
+  static forFloat32Array(inputLength) {
+    return new Autocorrelator(
+      inputLength,
+      (length) => new Float32Array(length),
+    );
+  }
+
+  /**
+   * A helper method to create an {@link Autocorrelator} using
+   * {@link Float64Array} buffers.
+   *
+   * @param inputLength {number} the input array length to support
+   * @returns {Autocorrelator<Float64Array>}
+   */
+  static forFloat64Array(inputLength) {
+    return new Autocorrelator(
+      inputLength,
+      (length) => new Float64Array(length),
+    );
+  }
+
+  /**
+   * A helper method to create an {@link Autocorrelator} using \`number[]\`
+   * buffers.
+   *
+   * @param inputLength {number} the input array length to support
+   * @returns {Autocorrelator<number[]>}
+   */
+  static forNumberArray(inputLength) {
+    return new Autocorrelator(inputLength, (length) => Array(length));
+  }
+
+  /**
+   * Constructs a new {@link Autocorrelator} able to handle input arrays of the
+   * given length.
+   *
+   * @param inputLength {number} the input array length to support. This
+   * \`Autocorrelator\` will only support operation on arrays of this length.
+   * @param bufferSupplier {(length: number) => T} the function to use for
+   * creating buffers, accepting the length of the buffer to create and
+   * returning a new buffer of that length. The values of the returned buffer
+   * need not be initialized in any particular way.
+   */
+  constructor(inputLength, bufferSupplier) {
+    if (inputLength < 1) {
+      throw new Error(\`Input length must be at least one\`);
+    }
+    this._inputLength = inputLength;
+    // We need to double the input length to get correct results, and the FFT
+    // algorithm we use requires a length that's a power of 2
+    this._fft = new FFT(ceilPow2(2 * inputLength));
+    this._bufferSupplier = bufferSupplier;
+    this._paddedInputBuffer = this._bufferSupplier(this._fft.size);
+    this._transformBuffer = this._bufferSupplier(2 * this._fft.size);
+    this._inverseBuffer = this._bufferSupplier(2 * this._fft.size);
+  }
+
+  /**
+   * Returns the supported input length.
+   *
+   * @returns {number} the supported input length
+   */
+  get inputLength() {
+    return this._inputLength;
+  }
+
+  /**
+   * Autocorrelates the given input data.
+   *
+   * @param input {ArrayLike<number>} the input data to autocorrelate
+   * @param output {T} the output buffer into which to write the autocorrelated
+   * data. If not provided, a new buffer will be created.
+   * @returns {T} \`output\`
+   */
+  autocorrelate(input, output = this._bufferSupplier(input.length)) {
+    if (input.length !== this._inputLength) {
+      throw new Error(
+        \`Input must have length \${this._inputLength} but had length \${input.length}\`,
+      );
+    }
+    // Step 0: pad the input array with zeros
+    for (let i = 0; i < input.length; i++) {
+      this._paddedInputBuffer[i] = input[i];
+    }
+    for (let i = input.length; i < this._paddedInputBuffer.length; i++) {
+      this._paddedInputBuffer[i] = 0;
+    }
+
+    // Step 1: get the DFT of the input array
+    this._fft.realTransform(this._transformBuffer, this._paddedInputBuffer);
+    // We need to fill in the right half of the array too
+    this._fft.completeSpectrum(this._transformBuffer);
+    // Step 2: multiply each entry by its conjugate
+    const tb = this._transformBuffer;
+    for (let i = 0; i < tb.length; i += 2) {
+      tb[i] = tb[i] * tb[i] + tb[i + 1] * tb[i + 1];
+      tb[i + 1] = 0;
+    }
+    // Step 3: perform the inverse transform
+    this._fft.inverseTransform(this._inverseBuffer, this._transformBuffer);
+
+    // This last result (the inverse transform) contains the autocorrelation
+    // data, which is completely real
+    for (let i = 0; i < input.length; i++) {
+      output[i] = this._inverseBuffer[2 * i];
+    }
+    return output;
+  }
+}
+
+/**
+ * Returns an array of all the key maximum positions in the given input array.
+ *
+ * In McLeod's paper, a key maximum is the highest maximum between a positively
+ * sloped zero crossing and a negatively sloped one.
+ *
+ * TODO: it may be more efficient not to construct a new output array each time,
+ * but that would also make the code more complicated (more so than the changes
+ * that were needed to remove the other allocations).
+ *
+ * @param input {ArrayLike<number>}
+ * @returns {number[]}
+ */
+function getKeyMaximumIndices(input) {
+  // The indices of the key maxima
+  /** @type {number[]} */ const keyIndices = [];
+  // Whether the last zero crossing found was positively sloped; equivalently,
+  // whether we're looking for a key maximum
+  let lookingForMaximum = false;
+  // The largest local maximum found so far
+  let max = -Infinity;
+  // The index of the largest local maximum so far
+  let maxIndex = -1;
+
+  for (let i = 1; i < input.length - 1; i++) {
+    if (input[i - 1] <= 0 && input[i] > 0) {
+      // Positively sloped zero crossing
+      lookingForMaximum = true;
+      maxIndex = i;
+      max = input[i];
+    } else if (input[i - 1] > 0 && input[i] <= 0) {
+      // Negatively sloped zero crossing
+      lookingForMaximum = false;
+      if (maxIndex !== -1) {
+        keyIndices.push(maxIndex);
+      }
+    } else if (lookingForMaximum && input[i] > max) {
+      max = input[i];
+      maxIndex = i;
+    }
+  }
+
+  return keyIndices;
+}
+
+/**
+ * Refines the chosen key maximum index chosen from the given data by
+ * interpolating a parabola using the key maximum index and its two neighbors
+ * and finding the position of that parabola's maximum value.
+ *
+ * This is described in section 5 of the MPM paper as a way to refine the
+ * position of the maximum.
+ *
+ * @param index {number} the chosen key maximum index. This must be between \`1\`
+ * and \`data.length - 2\`, inclusive, since it and its two neighbors need to be
+ * valid indexes of \`data\`.
+ * @param data {ArrayLike<number>} the input array from which \`index\` was chosen
+ * @returns {[number, number]} a pair consisting of the refined key maximum index and the
+ * interpolated value of \`data\` at that index (the latter of which is used as a
+ * measure of clarity)
+ */
+function refineResultIndex(index, data) {
+  const [x0, x1, x2] = [index - 1, index, index + 1];
+  const [y0, y1, y2] = [data[x0], data[x1], data[x2]];
+
+  // The parabola going through the three data points can be written as
+  // y = y0(x - x1)(x - x2)/(x0 - x1)(x0 - x2)
+  //   + y1(x - x0)(x - x2)/(x1 - x0)(x1 - x2)
+  //   + y2(x - x0)(x - x1)/(x2 - x0)(x2 - x1)
+  // Given the definitions of x0, x1, and x2, we can simplify the denominators:
+  // y = y0(x - x1)(x - x2)/2
+  //   - y1(x - x0)(x - x2)
+  //   + y2(x - x0)(x - x1)/2
+  // We can expand this out and get the coefficients in standard form:
+  // a = y0/2 - y1 + y2/2
+  // b = -(y0/2)(x1 + x2) + y1(x0 + x2) - (y2/2)(x0 + x1)
+  // c = y0x1x2/2 - y1x0x2 + y2x0x1/2
+  // The index of the maximum is -b / 2a (by solving for x where the derivative
+  // is 0).
+
+  const a = y0 / 2 - y1 + y2 / 2;
+  const b = -(y0 / 2) * (x1 + x2) + y1 * (x0 + x2) - (y2 / 2) * (x0 + x1);
+  const c = (y0 * x1 * x2) / 2 - y1 * x0 * x2 + (y2 * x0 * x1) / 2;
+
+  const xMax = -b / (2 * a);
+  const yMax = a * xMax * xMax + b * xMax + c;
+  return [xMax, yMax];
+}
+
+/**
+ * A class that can detect the pitch of a note from a time-domain input array.
+ *
+ * This class uses the McLeod pitch method (MPM) to detect pitches. MPM is
+ * described in the paper 'A Smarter Way to Find Pitch' by Philip McLeod and
+ * Geoff Wyvill
+ * (http://miracle.otago.ac.nz/tartini/papers/A_Smarter_Way_to_Find_Pitch.pdf).
+ *
+ * The class holds internal buffers so that a minimal number of additional
+ * allocations are necessary while performing the operation.
+ *
+ * @template {Buffer} T the buffer type to use internally. Inputs to the
+ * pitch-detection process can be any numeric array type.
+ */
+export class PitchDetector {
+  /** @private @type {Autocorrelator<T>} */
+  _autocorrelator;
+  /** @private @type {T} */
+  _nsdfBuffer;
+  /** @private @type {number} */
+  _clarityThreshold = 0.9;
+  /** @private @type {number} */
+  _minVolumeAbsolute = 0.0;
+  /** @private @type {number} */
+  _maxInputAmplitude = 1.0;
+
+  /**
+   * A helper method to create an {@link PitchDetector} using {@link Float32Array} buffers.
+   *
+   * @param inputLength {number} the input array length to support
+   * @returns {PitchDetector<Float32Array>}
+   */
+  static forFloat32Array(inputLength) {
+    return new PitchDetector(inputLength, (length) => new Float32Array(length));
+  }
+
+  /**
+   * A helper method to create an {@link PitchDetector} using {@link Float64Array} buffers.
+   *
+   * @param inputLength {number} the input array length to support
+   * @returns {PitchDetector<Float64Array>}
+   */
+  static forFloat64Array(inputLength) {
+    return new PitchDetector(inputLength, (length) => new Float64Array(length));
+  }
+
+  /**
+   * A helper method to create an {@link PitchDetector} using \`number[]\` buffers.
+   *
+   * @param inputLength {number} the input array length to support
+   * @returns {PitchDetector<number[]>}
+   */
+  static forNumberArray(inputLength) {
+    return new PitchDetector(inputLength, (length) => Array(length));
+  }
+
+  /**
+   * Constructs a new {@link PitchDetector} able to handle input arrays of the
+   * given length.
+   *
+   * @param inputLength {number} the input array length to support. This
+   * \`PitchDetector\` will only support operation on arrays of this length.
+   * @param bufferSupplier {(inputLength: number) => T} the function to use for
+   * creating buffers, accepting the length of the buffer to create and
+   * returning a new buffer of that length. The values of the returned buffer
+   * need not be initialized in any particular way.
+   */
+  constructor(inputLength, bufferSupplier) {
+    this._autocorrelator = new Autocorrelator(inputLength, bufferSupplier);
+    this._nsdfBuffer = bufferSupplier(inputLength);
+  }
+
+  /**
+   * Returns the supported input length.
+   *
+   * @returns {number} the supported input length
+   */
+  get inputLength() {
+    return this._autocorrelator.inputLength;
+  }
+
+  /**
+   * Sets the clarity threshold used when identifying the correct pitch (the constant
+   * \`k\` from the MPM paper). The value must be between 0 (exclusive) and 1
+   * (inclusive), with the most suitable range being between 0.8 and 1.
+   *
+   * @param threshold {number} the clarity threshold
+   */
+  set clarityThreshold(threshold) {
+    if (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1) {
+      throw new Error("clarityThreshold must be a number in the range (0, 1]");
+    }
+    this._clarityThreshold = threshold;
+  }
+
+  /**
+   * Sets the minimum detectable volume, as an absolute number between 0 and
+   * \`maxInputAmplitude\`, inclusive, to consider in a sample when detecting the
+   * pitch. If a sample fails to meet this minimum volume, \`findPitch\` will
+   * return a clarity of 0.
+   *
+   * Volume is calculated as the RMS (root mean square) of the input samples.
+   *
+   * @param volume {number} the minimum volume as an absolute amplitude value
+   */
+  set minVolumeAbsolute(volume) {
+    if (
+      !Number.isFinite(volume) ||
+      volume < 0 ||
+      volume > this._maxInputAmplitude
+    ) {
+      throw new Error(
+        \`minVolumeAbsolute must be a number in the range [0, \${this._maxInputAmplitude}]\`,
+      );
+    }
+    this._minVolumeAbsolute = volume;
+  }
+
+  /**
+   * Sets the minimum volume using a decibel measurement. Must be less than or
+   * equal to 0: 0 indicates the loudest possible sound (see
+   * \`maxInputAmplitude\`), -10 is a sound with a tenth of the volume of the
+   * loudest possible sound, etc.
+   *
+   * Volume is calculated as the RMS (root mean square) of the input samples.
+   *
+   * @param db {number} the minimum volume in decibels, with 0 being the loudest
+   * sound
+   */
+  set minVolumeDecibels(db) {
+    if (!Number.isFinite(db) || db > 0) {
+      throw new Error("minVolumeDecibels must be a number <= 0");
+    }
+    this._minVolumeAbsolute = this._maxInputAmplitude * 10 ** (db / 10);
+  }
+
+  /**
+   * Sets the maximum amplitude of an input reading. Must be greater than 0.
+   *
+   * @param amplitude {number} the maximum amplitude (absolute value) of an input reading
+   */
+  set maxInputAmplitude(amplitude) {
+    if (!Number.isFinite(amplitude) || amplitude <= 0) {
+      throw new Error("maxInputAmplitude must be a number > 0");
+    }
+    this._maxInputAmplitude = amplitude;
+  }
+
+  /**
+   * Returns the pitch detected using McLeod Pitch Method (MPM) along with a
+   * measure of its clarity.
+   *
+   * The clarity is a value between 0 and 1 (potentially inclusive) that
+   * represents how "clear" the pitch was. A clarity value of 1 indicates that
+   * the pitch was very distinct, while lower clarity values indicate less
+   * definite pitches.
+   *
+   * @param input {ArrayLike<number>} the time-domain input data
+   * @param sampleRate {number} the sample rate at which the input data was
+   * collected
+   * @returns {[number, number]} the detected pitch, in Hz, followed by the
+   * clarity. If a pitch cannot be determined from the input, such as if the
+   * volume is too low (see \`minVolumeAbsolute\` and \`minVolumeDecibels\`), this
+   * will be \`[0, 0]\`.
+   */
+  findPitch(input, sampleRate) {
+    // If the highest key maximum is less than the minimum volume, we don't need
+    // to bother detecting the pitch, as the sample is too quiet.
+    if (this._belowMinimumVolume(input)) return [0, 0];
+    this._nsdf(input);
+    const keyMaximumIndices = getKeyMaximumIndices(this._nsdfBuffer);
+    if (keyMaximumIndices.length === 0) {
+      // No key maxima means that we either don't have enough data to analyze or
+      // that the data was flawed (such as an input array of zeroes)
+      return [0, 0];
+    }
+    // The highest key maximum
+    const nMax = Math.max(...keyMaximumIndices.map((i) => this._nsdfBuffer[i]));
+    // Following the paper, we return the pitch corresponding to the first key
+    // maximum higher than K * nMax. This is guaranteed not to be undefined, since
+    // we know of at least one key maximum satisfying this condition (whichever
+    // key maximum gave us nMax).
+    const resultIndex = keyMaximumIndices.find(
+      (i) => this._nsdfBuffer[i] >= this._clarityThreshold * nMax,
+    );
+    const [refinedResultIndex, clarity] = refineResultIndex(
+      // @ts-expect-error resultIndex is guaranteed to be defined
+      resultIndex,
+      this._nsdfBuffer,
+    );
+
+    // Due to floating point errors, the clarity may occasionally come out to be
+    // slightly over 1.0. We can avoid incorrect results by clamping the value.
+    return [sampleRate / refinedResultIndex, Math.min(clarity, 1.0)];
+  }
+
+  /**
+   * Returns whether the input audio data is below the minimum volume allowed by
+   * the pitch detector.
+   *
+   * @private
+   * @param input {ArrayLike<number>}
+   * @returns {boolean}
+   */
+  _belowMinimumVolume(input) {
+    if (this._minVolumeAbsolute === 0) return false;
+    let squareSum = 0;
+    for (let i = 0; i < input.length; i++) {
+      squareSum += input[i] ** 2;
+    }
+    return Math.sqrt(squareSum / input.length) < this._minVolumeAbsolute;
+  }
+
+  /**
+   * Computes the NSDF of the input and stores it in the internal buffer. This
+   * is equation (9) in the McLeod pitch method paper.
+   *
+   * @private
+   * @param input {ArrayLike<number>}
+   */
+  _nsdf(input) {
+    // The function r'(tau) is the autocorrelation
+    this._autocorrelator.autocorrelate(input, this._nsdfBuffer);
+    // The function m'(tau) (defined in equation (6)) can be computed starting
+    // with m'(0), which is equal to 2r'(0), and then iteratively modified to
+    // get m'(1), m'(2), etc. For example, to get m'(1), we take m'(0) and
+    // subtract x_0^2 and x_{W-1}^2. Then, to get m'(2), we take m'(1) and
+    // subtract x_1^2 and x_{W-2}^2, and further values are similar (see the
+    // note at the end of section 6 in the MPM paper).
+    //
+    // The resulting array values are 2 * r'(tau) / m'(tau). We use m below as
+    // the incremental value of m'.
+    let m = 2 * this._nsdfBuffer[0];
+    /** @type {number} */ let i;
+    // As pointed out by issuefiler on GitHub, we can take advantage of the fact
+    // that m will never increase to avoid division by zero by ending this loop
+    // once m === 0. The rest of the array values after m becomes 0 will just be
+    // set to 0 themselves. We actually check for m > 0 rather than m === 0
+    // because there may be small floating-point errors that cause m to become
+    // negative rather than exactly 0.
+    for (i = 0; i < this._nsdfBuffer.length && m > 0; i++) {
+      this._nsdfBuffer[i] = (2 * this._nsdfBuffer[i]) / m;
+      m -= input[i] ** 2 + input[input.length - i - 1] ** 2;
+    }
+    // If there are any array values remaining, it means m === 0 for those
+    // values of tau, so we can just set them to 0
+    for (; i < this._nsdfBuffer.length; i++) {
+      this._nsdfBuffer[i] = 0;
+    }
+  }
+}
+
+/**
+ * Rounds up the input to the next power of 2.
+ *
+ * @param {number} v
+ * @returns {number} the next power of 2 at least as large as \`v\`
+ */
+function ceilPow2(v) {
+  // https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
+  v--;
+  v |= v >> 1;
+  v |= v >> 2;
+  v |= v >> 4;
+  v |= v >> 8;
+  v |= v >> 16;
+  v++;
+  return v;
+}
+
 'use strict';
 
 function FFT(size) {
@@ -89,7 +669,7 @@ function FFT(size) {
 
   this._csize = size << 1;
 
-  // NOTE: Use of `var` is intentional for old V8 versions
+  // NOTE: Use of \`var\` is intentional for old V8 versions
   var table = new Array(this.size * 2);
   for (var i = 0; i < table.length; i += 2) {
     const angle = Math.PI * i / this.size;
@@ -105,7 +685,7 @@ function FFT(size) {
 
   // Calculate initial step's width:
   //   * If we are full radix-4 - it is 2x smaller to give inital len=8
-  //   * Otherwise it is the same as `power` to give len=4
+  //   * Otherwise it is the same as \`power\` to give len=4
   this._width = power % 2 === 0 ? power - 1 : power;
 
   // Pre-compute bit-reversal patterns
@@ -122,7 +702,7 @@ function FFT(size) {
   this._data = null;
   this._inv = 0;
 }
-
+module.exports = FFT;
 
 FFT.prototype.fromComplexArray = function fromComplexArray(complex, storage) {
   var res = storage || new Array(complex.length >>> 1);
@@ -196,8 +776,8 @@ FFT.prototype.inverseTransform = function inverseTransform(out, data) {
 
 // radix-4 implementation
 //
-// NOTE: Uses of `var` are intentional for older V8 version that do not
-// support both `let compound assignments` and `const phi`
+// NOTE: Uses of \`var\` are intentional for older V8 version that do not
+// support both \`let compound assignments\` and \`const phi\`
 FFT.prototype._transform4 = function _transform4() {
   var out = this._out;
   var size = this._csize;
@@ -588,973 +1168,474 @@ FFT.prototype._singleRealTransform4 = function _singleRealTransform4(outOff,
   out[outOff + 7] = FDi;
 };
 
-
-
-/**
- * @typedef {Float32Array | Float64Array | number[]} Buffer One of the supported
- * buffer types. Other numeric array types may not work correctly.
- */
-
-/**
- * A class that can perform autocorrelation on input arrays of a given size.
- *
- * The class holds internal buffers so that no additional allocations are
- * necessary while performing the operation.
- *
- * @template {Buffer} T the buffer type to use. While inputs to the
- * autocorrelation process can be any array-like type, the output buffer
- * (whether provided explicitly or using a fresh buffer) is always of this type.
- */
-class Autocorrelator {
-  /** @private @readonly @type {number} */
-  _inputLength;
-  /** @private @type {FFT} */
-  _fft;
-  /** @private @type {(size: number) => T} */
-  _bufferSupplier;
-  /** @private @type {T} */
-  _paddedInputBuffer;
-  /** @private @type {T} */
-  _transformBuffer;
-  /** @private @type {T} */
-  _inverseBuffer;
-
-  /**
-   * A helper method to create an {@link Autocorrelator} using
-   * {@link Float32Array} buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {Autocorrelator<Float32Array>}
-   */
-  static forFloat32Array(inputLength) {
-    return new Autocorrelator(
-      inputLength,
-      (length) => new Float32Array(length),
-    );
-  }
-
-  /**
-   * A helper method to create an {@link Autocorrelator} using
-   * {@link Float64Array} buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {Autocorrelator<Float64Array>}
-   */
-  static forFloat64Array(inputLength) {
-    return new Autocorrelator(
-      inputLength,
-      (length) => new Float64Array(length),
-    );
-  }
-
-  /**
-   * A helper method to create an {@link Autocorrelator} using `number[]`
-   * buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {Autocorrelator<number[]>}
-   */
-  static forNumberArray(inputLength) {
-    return new Autocorrelator(inputLength, (length) => Array(length));
-  }
-
-  /**
-   * Constructs a new {@link Autocorrelator} able to handle input arrays of the
-   * given length.
-   *
-   * @param inputLength {number} the input array length to support. This
-   * `Autocorrelator` will only support operation on arrays of this length.
-   * @param bufferSupplier {(length: number) => T} the function to use for
-   * creating buffers, accepting the length of the buffer to create and
-   * returning a new buffer of that length. The values of the returned buffer
-   * need not be initialized in any particular way.
-   */
-  constructor(inputLength, bufferSupplier) {
-    if (inputLength < 1) {
-      throw new Error(`Input length must be at least one`);
-    }
-    this._inputLength = inputLength;
-    // We need to double the input length to get correct results, and the FFT
-    // algorithm we use requires a length that's a power of 2
-    this._fft = new FFT(ceilPow2(2 * inputLength));
-    this._bufferSupplier = bufferSupplier;
-    this._paddedInputBuffer = this._bufferSupplier(this._fft.size);
-    this._transformBuffer = this._bufferSupplier(2 * this._fft.size);
-    this._inverseBuffer = this._bufferSupplier(2 * this._fft.size);
-  }
-
-  /**
-   * Returns the supported input length.
-   *
-   * @returns {number} the supported input length
-   */
-  get inputLength() {
-    return this._inputLength;
-  }
-
-  /**
-   * Autocorrelates the given input data.
-   *
-   * @param input {ArrayLike<number>} the input data to autocorrelate
-   * @param output {T} the output buffer into which to write the autocorrelated
-   * data. If not provided, a new buffer will be created.
-   * @returns {T} `output`
-   */
-  autocorrelate(input, output = this._bufferSupplier(input.length)) {
-    if (input.length !== this._inputLength) {
-      throw new Error(
-        `Input must have length ${this._inputLength} but had length ${input.length}`,
-      );
-    }
-    // Step 0: pad the input array with zeros
-    for (let i = 0; i < input.length; i++) {
-      this._paddedInputBuffer[i] = input[i];
-    }
-    for (let i = input.length; i < this._paddedInputBuffer.length; i++) {
-      this._paddedInputBuffer[i] = 0;
-    }
-
-    // Step 1: get the DFT of the input array
-    this._fft.realTransform(this._transformBuffer, this._paddedInputBuffer);
-    // We need to fill in the right half of the array too
-    this._fft.completeSpectrum(this._transformBuffer);
-    // Step 2: multiply each entry by its conjugate
-    const tb = this._transformBuffer;
-    for (let i = 0; i < tb.length; i += 2) {
-      tb[i] = tb[i] * tb[i] + tb[i + 1] * tb[i + 1];
-      tb[i + 1] = 0;
-    }
-    // Step 3: perform the inverse transform
-    this._fft.inverseTransform(this._inverseBuffer, this._transformBuffer);
-
-    // This last result (the inverse transform) contains the autocorrelation
-    // data, which is completely real
-    for (let i = 0; i < input.length; i++) {
-      output[i] = this._inverseBuffer[2 * i];
-    }
-    return output;
-  }
-}
-
-/**
- * Returns an array of all the key maximum positions in the given input array.
- *
- * In McLeod's paper, a key maximum is the highest maximum between a positively
- * sloped zero crossing and a negatively sloped one.
- *
- * TODO: it may be more efficient not to construct a new output array each time,
- * but that would also make the code more complicated (more so than the changes
- * that were needed to remove the other allocations).
- *
- * @param input {ArrayLike<number>}
- * @returns {number[]}
- */
-function getKeyMaximumIndices(input) {
-  // The indices of the key maxima
-  /** @type {number[]} */ const keyIndices = [];
-  // Whether the last zero crossing found was positively sloped; equivalently,
-  // whether we're looking for a key maximum
-  let lookingForMaximum = false;
-  // The largest local maximum found so far
-  let max = -Infinity;
-  // The index of the largest local maximum so far
-  let maxIndex = -1;
-
-  for (let i = 1; i < input.length - 1; i++) {
-    if (input[i - 1] <= 0 && input[i] > 0) {
-      // Positively sloped zero crossing
-      lookingForMaximum = true;
-      maxIndex = i;
-      max = input[i];
-    } else if (input[i - 1] > 0 && input[i] <= 0) {
-      // Negatively sloped zero crossing
-      lookingForMaximum = false;
-      if (maxIndex !== -1) {
-        keyIndices.push(maxIndex);
+// Real-time pitch + onset worklet for the voice MIDI controller.
+// Runs McLeod pitch detection (via Pitchy) and spectral-flux onset
+// detection per hop, posts compact frames to the main thread.
+class VoicePitchProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.WIN = 1024;
+    this.HOP = 256;
+    this.buf = new Float32Array(this.WIN);
+    this.pos = 0;
+    this.det = null;
+    this.prevMag = null;
+    this.fft = null;
+    this.hann = new Float32Array(this.WIN);
+    for (let i = 0; i < this.WIN; i++)
+      this.hann[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / this.WIN));
+    this.clarityMin = 0.82;
+    this.port.onmessage = (e) => {
+      if (e.data.type === 'init') {
+        // Pitchy is injected before this class definition
+        this.det = PitchDetector.forFloat32Array(this.WIN);
+        this.det.clarityThreshold = this.clarityMin;
+        this.fft = new FFT(this.WIN);
+      } else if (e.data.type === 'config') {
+        if (e.data.clarityMin) {
+          this.clarityMin = e.data.clarityMin;
+          if (this.det) this.det.clarityThreshold = this.clarityMin;
+        }
       }
-    } else if (lookingForMaximum && input[i] > max) {
-      max = input[i];
-      maxIndex = i;
+    };
+  }
+
+  analyzeFrame() {
+    const WIN = this.WIN, sr = sampleRate;
+    const w = this.buf;
+    let rms = 0;
+    for (let j = 0; j < WIN; j++) rms += w[j] * w[j];
+    rms = Math.sqrt(rms / WIN);
+    let f = 0, c = 0;
+    if (rms > 1e-4 && this.det) {
+      const r = this.det.findPitch(w, sr);
+      f = r[0]; c = r[1];
     }
-  }
-
-  return keyIndices;
-}
-
-/**
- * Refines the chosen key maximum index chosen from the given data by
- * interpolating a parabola using the key maximum index and its two neighbors
- * and finding the position of that parabola's maximum value.
- *
- * This is described in section 5 of the MPM paper as a way to refine the
- * position of the maximum.
- *
- * @param index {number} the chosen key maximum index. This must be between `1`
- * and `data.length - 2`, inclusive, since it and its two neighbors need to be
- * valid indexes of `data`.
- * @param data {ArrayLike<number>} the input array from which `index` was chosen
- * @returns {[number, number]} a pair consisting of the refined key maximum index and the
- * interpolated value of `data` at that index (the latter of which is used as a
- * measure of clarity)
- */
-function refineResultIndex(index, data) {
-  const [x0, x1, x2] = [index - 1, index, index + 1];
-  const [y0, y1, y2] = [data[x0], data[x1], data[x2]];
-
-  // The parabola going through the three data points can be written as
-  // y = y0(x - x1)(x - x2)/(x0 - x1)(x0 - x2)
-  //   + y1(x - x0)(x - x2)/(x1 - x0)(x1 - x2)
-  //   + y2(x - x0)(x - x1)/(x2 - x0)(x2 - x1)
-  // Given the definitions of x0, x1, and x2, we can simplify the denominators:
-  // y = y0(x - x1)(x - x2)/2
-  //   - y1(x - x0)(x - x2)
-  //   + y2(x - x0)(x - x1)/2
-  // We can expand this out and get the coefficients in standard form:
-  // a = y0/2 - y1 + y2/2
-  // b = -(y0/2)(x1 + x2) + y1(x0 + x2) - (y2/2)(x0 + x1)
-  // c = y0x1x2/2 - y1x0x2 + y2x0x1/2
-  // The index of the maximum is -b / 2a (by solving for x where the derivative
-  // is 0).
-
-  const a = y0 / 2 - y1 + y2 / 2;
-  const b = -(y0 / 2) * (x1 + x2) + y1 * (x0 + x2) - (y2 / 2) * (x0 + x1);
-  const c = (y0 * x1 * x2) / 2 - y1 * x0 * x2 + (y2 * x0 * x1) / 2;
-
-  const xMax = -b / (2 * a);
-  const yMax = a * xMax * xMax + b * xMax + c;
-  return [xMax, yMax];
-}
-
-/**
- * A class that can detect the pitch of a note from a time-domain input array.
- *
- * This class uses the McLeod pitch method (MPM) to detect pitches. MPM is
- * described in the paper 'A Smarter Way to Find Pitch' by Philip McLeod and
- * Geoff Wyvill
- * (http://miracle.otago.ac.nz/tartini/papers/A_Smarter_Way_to_Find_Pitch.pdf).
- *
- * The class holds internal buffers so that a minimal number of additional
- * allocations are necessary while performing the operation.
- *
- * @template {Buffer} T the buffer type to use internally. Inputs to the
- * pitch-detection process can be any numeric array type.
- */
-class PitchDetector {
-  /** @private @type {Autocorrelator<T>} */
-  _autocorrelator;
-  /** @private @type {T} */
-  _nsdfBuffer;
-  /** @private @type {number} */
-  _clarityThreshold = 0.9;
-  /** @private @type {number} */
-  _minVolumeAbsolute = 0.0;
-  /** @private @type {number} */
-  _maxInputAmplitude = 1.0;
-
-  /**
-   * A helper method to create an {@link PitchDetector} using {@link Float32Array} buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {PitchDetector<Float32Array>}
-   */
-  static forFloat32Array(inputLength) {
-    return new PitchDetector(inputLength, (length) => new Float32Array(length));
-  }
-
-  /**
-   * A helper method to create an {@link PitchDetector} using {@link Float64Array} buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {PitchDetector<Float64Array>}
-   */
-  static forFloat64Array(inputLength) {
-    return new PitchDetector(inputLength, (length) => new Float64Array(length));
-  }
-
-  /**
-   * A helper method to create an {@link PitchDetector} using `number[]` buffers.
-   *
-   * @param inputLength {number} the input array length to support
-   * @returns {PitchDetector<number[]>}
-   */
-  static forNumberArray(inputLength) {
-    return new PitchDetector(inputLength, (length) => Array(length));
-  }
-
-  /**
-   * Constructs a new {@link PitchDetector} able to handle input arrays of the
-   * given length.
-   *
-   * @param inputLength {number} the input array length to support. This
-   * `PitchDetector` will only support operation on arrays of this length.
-   * @param bufferSupplier {(inputLength: number) => T} the function to use for
-   * creating buffers, accepting the length of the buffer to create and
-   * returning a new buffer of that length. The values of the returned buffer
-   * need not be initialized in any particular way.
-   */
-  constructor(inputLength, bufferSupplier) {
-    this._autocorrelator = new Autocorrelator(inputLength, bufferSupplier);
-    this._nsdfBuffer = bufferSupplier(inputLength);
-  }
-
-  /**
-   * Returns the supported input length.
-   *
-   * @returns {number} the supported input length
-   */
-  get inputLength() {
-    return this._autocorrelator.inputLength;
-  }
-
-  /**
-   * Sets the clarity threshold used when identifying the correct pitch (the constant
-   * `k` from the MPM paper). The value must be between 0 (exclusive) and 1
-   * (inclusive), with the most suitable range being between 0.8 and 1.
-   *
-   * @param threshold {number} the clarity threshold
-   */
-  set clarityThreshold(threshold) {
-    if (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1) {
-      throw new Error("clarityThreshold must be a number in the range (0, 1]");
+    // spectral features for triggers / vowel
+    let centroid = 0, flux = 0;
+    if (this.fft) {
+      const rIn = new Float32Array(WIN);
+      const cOut = new Array(WIN * 2);
+      for (let j = 0; j < WIN; j++) rIn[j] = w[j] * this.hann[j];
+      this.fft.realTransform(cOut, rIn);
+      this.fft.completeSpectrum(cOut);
+      let sM = 0, sF = 0;
+      const NB = WIN / 2;
+      const mag = new Float32Array(NB);
+      for (let j = 1; j < NB; j++) {
+        const m = Math.hypot(cOut[2 * j], cOut[2 * j + 1]);
+        mag[j] = m; sM += m; sF += m * j;
+        if (this.prevMag) { const d = m - this.prevMag[j]; if (d > 0) flux += d; }
+      }
+      if (sM > 1e-9) centroid = (sF / sM) * sr / WIN;
+      this.prevMag = mag;
     }
-    this._clarityThreshold = threshold;
+    this.port.postMessage({ type: 'frame', f, c, rms, centroid, flux });
   }
 
-  /**
-   * Sets the minimum detectable volume, as an absolute number between 0 and
-   * `maxInputAmplitude`, inclusive, to consider in a sample when detecting the
-   * pitch. If a sample fails to meet this minimum volume, `findPitch` will
-   * return a clarity of 0.
-   *
-   * Volume is calculated as the RMS (root mean square) of the input samples.
-   *
-   * @param volume {number} the minimum volume as an absolute amplitude value
-   */
-  set minVolumeAbsolute(volume) {
-    if (
-      !Number.isFinite(volume) ||
-      volume < 0 ||
-      volume > this._maxInputAmplitude
-    ) {
-      throw new Error(
-        `minVolumeAbsolute must be a number in the range [0, ${this._maxInputAmplitude}]`,
-      );
-    }
-    this._minVolumeAbsolute = volume;
-  }
-
-  /**
-   * Sets the minimum volume using a decibel measurement. Must be less than or
-   * equal to 0: 0 indicates the loudest possible sound (see
-   * `maxInputAmplitude`), -10 is a sound with a tenth of the volume of the
-   * loudest possible sound, etc.
-   *
-   * Volume is calculated as the RMS (root mean square) of the input samples.
-   *
-   * @param db {number} the minimum volume in decibels, with 0 being the loudest
-   * sound
-   */
-  set minVolumeDecibels(db) {
-    if (!Number.isFinite(db) || db > 0) {
-      throw new Error("minVolumeDecibels must be a number <= 0");
-    }
-    this._minVolumeAbsolute = this._maxInputAmplitude * 10 ** (db / 10);
-  }
-
-  /**
-   * Sets the maximum amplitude of an input reading. Must be greater than 0.
-   *
-   * @param amplitude {number} the maximum amplitude (absolute value) of an input reading
-   */
-  set maxInputAmplitude(amplitude) {
-    if (!Number.isFinite(amplitude) || amplitude <= 0) {
-      throw new Error("maxInputAmplitude must be a number > 0");
-    }
-    this._maxInputAmplitude = amplitude;
-  }
-
-  /**
-   * Returns the pitch detected using McLeod Pitch Method (MPM) along with a
-   * measure of its clarity.
-   *
-   * The clarity is a value between 0 and 1 (potentially inclusive) that
-   * represents how "clear" the pitch was. A clarity value of 1 indicates that
-   * the pitch was very distinct, while lower clarity values indicate less
-   * definite pitches.
-   *
-   * @param input {ArrayLike<number>} the time-domain input data
-   * @param sampleRate {number} the sample rate at which the input data was
-   * collected
-   * @returns {[number, number]} the detected pitch, in Hz, followed by the
-   * clarity. If a pitch cannot be determined from the input, such as if the
-   * volume is too low (see `minVolumeAbsolute` and `minVolumeDecibels`), this
-   * will be `[0, 0]`.
-   */
-  findPitch(input, sampleRate) {
-    // If the highest key maximum is less than the minimum volume, we don't need
-    // to bother detecting the pitch, as the sample is too quiet.
-    if (this._belowMinimumVolume(input)) return [0, 0];
-    this._nsdf(input);
-    const keyMaximumIndices = getKeyMaximumIndices(this._nsdfBuffer);
-    if (keyMaximumIndices.length === 0) {
-      // No key maxima means that we either don't have enough data to analyze or
-      // that the data was flawed (such as an input array of zeroes)
-      return [0, 0];
-    }
-    // The highest key maximum
-    const nMax = Math.max(...keyMaximumIndices.map((i) => this._nsdfBuffer[i]));
-    // Following the paper, we return the pitch corresponding to the first key
-    // maximum higher than K * nMax. This is guaranteed not to be undefined, since
-    // we know of at least one key maximum satisfying this condition (whichever
-    // key maximum gave us nMax).
-    const resultIndex = keyMaximumIndices.find(
-      (i) => this._nsdfBuffer[i] >= this._clarityThreshold * nMax,
-    );
-    const [refinedResultIndex, clarity] = refineResultIndex(
-      // @ts-expect-error resultIndex is guaranteed to be defined
-      resultIndex,
-      this._nsdfBuffer,
-    );
-
-    // Due to floating point errors, the clarity may occasionally come out to be
-    // slightly over 1.0. We can avoid incorrect results by clamping the value.
-    return [sampleRate / refinedResultIndex, Math.min(clarity, 1.0)];
-  }
-
-  /**
-   * Returns whether the input audio data is below the minimum volume allowed by
-   * the pitch detector.
-   *
-   * @private
-   * @param input {ArrayLike<number>}
-   * @returns {boolean}
-   */
-  _belowMinimumVolume(input) {
-    if (this._minVolumeAbsolute === 0) return false;
-    let squareSum = 0;
-    for (let i = 0; i < input.length; i++) {
-      squareSum += input[i] ** 2;
-    }
-    return Math.sqrt(squareSum / input.length) < this._minVolumeAbsolute;
-  }
-
-  /**
-   * Computes the NSDF of the input and stores it in the internal buffer. This
-   * is equation (9) in the McLeod pitch method paper.
-   *
-   * @private
-   * @param input {ArrayLike<number>}
-   */
-  _nsdf(input) {
-    // The function r'(tau) is the autocorrelation
-    this._autocorrelator.autocorrelate(input, this._nsdfBuffer);
-    // The function m'(tau) (defined in equation (6)) can be computed starting
-    // with m'(0), which is equal to 2r'(0), and then iteratively modified to
-    // get m'(1), m'(2), etc. For example, to get m'(1), we take m'(0) and
-    // subtract x_0^2 and x_{W-1}^2. Then, to get m'(2), we take m'(1) and
-    // subtract x_1^2 and x_{W-2}^2, and further values are similar (see the
-    // note at the end of section 6 in the MPM paper).
-    //
-    // The resulting array values are 2 * r'(tau) / m'(tau). We use m below as
-    // the incremental value of m'.
-    let m = 2 * this._nsdfBuffer[0];
-    /** @type {number} */ let i;
-    // As pointed out by issuefiler on GitHub, we can take advantage of the fact
-    // that m will never increase to avoid division by zero by ending this loop
-    // once m === 0. The rest of the array values after m becomes 0 will just be
-    // set to 0 themselves. We actually check for m > 0 rather than m === 0
-    // because there may be small floating-point errors that cause m to become
-    // negative rather than exactly 0.
-    for (i = 0; i < this._nsdfBuffer.length && m > 0; i++) {
-      this._nsdfBuffer[i] = (2 * this._nsdfBuffer[i]) / m;
-      m -= input[i] ** 2 + input[input.length - i - 1] ** 2;
-    }
-    // If there are any array values remaining, it means m === 0 for those
-    // values of tau, so we can just set them to 0
-    for (; i < this._nsdfBuffer.length; i++) {
-      this._nsdfBuffer[i] = 0;
-    }
-  }
-}
-
-/**
- * Rounds up the input to the next power of 2.
- *
- * @param {number} v
- * @returns {number} the next power of 2 at least as large as `v`
- */
-function ceilPow2(v) {
-  // https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
-  v--;
-  v |= v >> 1;
-  v |= v >> 2;
-  v |= v >> 4;
-  v |= v >> 8;
-  v |= v >> 16;
-  v++;
-  return v;
-}
-
-/* ================= config ================= */
-const WIN = 1024, HOP = 256;
-const CLARITY_MIN = 0.82;
-const HOPS_ON = 4, HOPS_OFF = 8;
-const MIN_NOTE_S = 0.09;
-const TEST_MODE = new URLSearchParams(location.search).get("test"); // ?test=melody
-
-const SCALES = {
-  "Chromatic": [0,1,2,3,4,5,6,7,8,9,10,11],
-  "Major": [0,2,4,5,7,9,11],
-  "Minor": [0,2,3,5,7,8,10],
-  "Penta": [0,2,4,7,9],
-};
-const INSTRUMENTS = {
-  "Lead":  { type: "sawtooth", cutoff: 3200, drive: 0.35, attack: 0.012 },
-  "Flute": { type: "sine",     cutoff: 2400, drive: 0.10, attack: 0.060 },
-  "Bass":  { type: "square",   cutoff: 900,  drive: 0.45, attack: 0.010, oct: -12 },
-};
-const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-const $ = id => document.getElementById(id);
-const hz2midi = f => 69 + 12 * Math.log2(f / 440);
-const midi2hz = m => 440 * Math.pow(2, (m - 69) / 12);
-const midiName = m => NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
-
-/* ================= state ================= */
-let AC = null, capNode = null, micStream = null;
-let chunks = [], recording = false, recStart = 0, recTimerInt = null;
-let rawBuffer = null;   // Float32Array of the take
-let notes = [];         // detected [{midi, start, dur, vel}]
-let hits = [];          // detected drum hits [{t, kind, vel}]
-let curScale = "Major", curInst = "Lead";
-let synthNodes = null, playing = false;
-
-/* ================= capture worklet ================= */
-const WORKLET_SRC = `
-class WBCapture extends AudioWorkletProcessor {
   process(inputs) {
-    var ch = inputs[0] && inputs[0][0];
-    if (ch) this.port.postMessage(ch.slice(0));
+    const inp = inputs[0];
+    if (!inp || !inp.length) return true;
+    const ch = inp[0];
+    for (let i = 0; i < ch.length; i++) {
+      this.buf[this.pos++] = ch[i];
+      if (this.pos >= this.WIN) {
+        if (this.det) this.analyzeFrame();
+        // shift by HOP
+        this.buf.copyWithin(0, this.HOP);
+        this.pos = this.WIN - this.HOP;
+      }
+    }
     return true;
   }
 }
-registerProcessor("wb-capture", WBCapture);
+registerProcessor('voice-pitch', VoicePitchProcessor);
 `;
-
-/* ================= offline analysis: notes + drum hits ================= */
-// whistle-synth lesson: the noise floor is learned from frames that are NOT
-// notes (low periodicity), never from mere quiet. Level rejects the room,
-// periodicity rejects noise; they are independent tests.
-function analyzeTake(buf, sampleRate, scaleName) {
-  const det = PitchDetector.forFloat32Array(WIN);
-  det.clarityThreshold = CLARITY_MIN;
-  const fft = new FFT(WIN);
-  const hann = new Float32Array(WIN);
-  for (let i = 0; i < WIN; i++) hann[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / WIN));
-
-  const frames = [];
-  let prevMag = null;
-  const rIn = new Float32Array(WIN);
-  const cOut = new Array(WIN * 2);
-  for (let pos = 0; pos + WIN <= buf.length; pos += HOP) {
-    const win = buf.subarray(pos, pos + WIN);
-    let rms = 0, zc = 0;
-    for (let j = 0; j < WIN; j++) {
-      rms += win[j] * win[j];
-      if (j > 0 && (win[j] >= 0) !== (win[j - 1] >= 0)) zc++;
-    }
-    rms = Math.sqrt(rms / WIN);
-    let f = 0, c = 0;
-    if (rms > 1e-4) { const r = det.findPitch(win, sampleRate); f = r[0]; c = r[1]; }
-    // spectrum for timbre (realTransform takes a real input array)
-    for (let j = 0; j < WIN; j++) rIn[j] = win[j] * hann[j];
-    fft.realTransform(cOut, rIn);
-    fft.completeSpectrum(cOut);
-    let sM = 0, sF = 0, sL = 0, flux = 0;
-    const NB = WIN / 2;
-    for (let j = 1; j < NB; j++) {
-      const m = Math.hypot(cOut[2 * j], cOut[2 * j + 1]);
-      sM += m; sF += m * j;
-      if (m > 1e-9) sL += Math.log(m);
-      if (prevMag) { const d = m - prevMag[j]; if (d > 0) flux += d; }
-    }
-    const centroid = sM > 1e-9 ? (sF / sM) * sampleRate / WIN : 0;
-    const flatness = sM > 1e-9 ? Math.exp(sL / (NB - 1)) / (sM / (NB - 1)) : 0;
-    if (!prevMag) prevMag = new Float32Array(NB);
-    for (let j = 0; j < NB; j++) prevMag[j] = Math.hypot(cOut[2 * j], cOut[2 * j + 1]);
-    frames.push({ f, c, rms, zcr: zc / WIN, centroid, flatness, flux, t: pos / sampleRate });
-  }
-  if (!frames.length) return { notes: [], hits: [] };
-
-  // floor from aperiodic frames (room noise, not notes, not beatbox hits)
-  const aper = frames.filter(x => x.c < 0.5).map(x => x.rms).sort((a, b) => a - b);
-  const floor = aper.length > 8 ? aper[Math.floor(aper.length * 0.2)] : 0.004;
-  const maxRms = Math.max(...frames.map(x => x.rms));
-  const gate = Math.min(Math.max(0.008, floor * 4), maxRms * 0.5);
-
-  const notes = findNotes(frames, gate, scaleName);
-  const hits = findHits(frames, gate, notes);
-  return { notes, hits };
-}
-
-function findNotes(frames, gate, scaleName) {
-  const iv = SCALES[scaleName];
-  const snap = mf => {
-    const base = Math.round(mf);
-    let best = base, bestD = 1e9;
-    for (let o = -2; o <= 2; o++) for (const s of iv) {
-      const m = Math.floor(base / 12) * 12 + o * 12 + s;
-      const d = Math.abs(m - mf);
-      if (d < bestD) { bestD = d; best = m; }
-    }
-    return best;
-  };
-  const closeNote = (cur, endT, raw) => {
-    cur.fs.sort((a, b) => a - b);
-    const med = cur.fs[Math.floor(cur.fs.length / 2)];
-    const dur = endT - cur.start;
-    // stability: a whistle note holds pitch; a kick sweeps. Reject sweepers.
-    const p10 = cur.fs[Math.floor(cur.fs.length * 0.1)];
-    const p90 = cur.fs[Math.floor(cur.fs.length * 0.9)];
-    const stable = p10 > 0 && p90 / p10 < 1.25;
-    if (dur >= MIN_NOTE_S && med > 0 && stable) {
-      const mf = hz2midi(med);
-      const vel = Math.min(1, Math.max(...cur.rms) / (gate * 3));
-      raw.push({ midi: snap(mf), start: cur.start, dur, vel });
-    }
-  };
-  const raw = [];
-  let cur = null, onN = 0, offN = 0;
-  frames.forEach((fr, i) => {
-    const tone = fr.c >= CLARITY_MIN && fr.rms >= gate && fr.f > 60 && fr.f < 5000;
-    if (tone) { onN++; offN = 0; } else { offN++; onN = 0; }
-    if (!cur && onN >= HOPS_ON) cur = { start: (i - HOPS_ON + 1) * HOP / AC_SR, fs: [], rms: [] };
-    if (cur && tone) { cur.fs.push(fr.f); cur.rms.push(fr.rms); }
-    if (cur && offN >= HOPS_OFF) {
-      closeNote(cur, (i - HOPS_OFF + 1) * HOP / AC_SR, raw);
-      cur = null;
-    }
-  });
-  if (cur) closeNote(cur, frames[frames.length - 1].t + WIN / AC_SR, raw);
-  return raw.map(({ midi, start, dur, vel }) => ({ midi, start, dur, vel }));
-}
-
-let AC_SR = 48000;
-
-function findHits(frames, gate, notes) {
-  // spectral-flux onset detection with adaptive threshold.
-  // A hit must be a RISING edge (quiet -> loud), not a whistle attack
-  // and not a tone offset. Kicks are low, snare/hat split by duration.
-  const fluxMed = [];
-  const hits = [];
-  let lastHit = -1;
-  const nearNoteOnset = t => notes.some(n => Math.abs(t - n.start) < 0.12);
-  frames.forEach((fr, i) => {
-    fluxMed.push(fr.flux);
-    if (fluxMed.length > 24) fluxMed.shift();
-    const med = [...fluxMed].sort((a, b) => a - b)[Math.floor(fluxMed.length / 2)] || 0;
-    const thresh = Math.max(gate * 30, med * 3);
-    const prevRms = i > 0 ? frames[i - 1].rms : 0;
-    const rising = fr.rms > Math.max(prevRms * 1.6, gate * 1.5);
-    const strongTransient = fr.flux > thresh && fr.c < 0.6 && rising;
-    if (strongTransient && fr.t - lastHit > 0.09 && !nearNoteOnset(fr.t)) {
-      lastHit = fr.t;
-      // how long does it stay loud? (hat = very short)
-      let loudFrames = 0;
-      for (let j = i; j < Math.min(frames.length, i + 24); j++) {
-        if (frames[j].rms > gate * 1.2) loudFrames++;
-        else break;
-      }
-      // classify on the body (min centroid over next frames), not the attack click
-      let minCent = fr.centroid;
-      for (let j = i + 1; j < Math.min(frames.length, i + 4); j++) {
-        if (frames[j].centroid < minCent) minCent = frames[j].centroid;
-      }
-      let kind = "snare";
-      if (minCent < 1200) kind = "kick";
-      else if (loudFrames < 8) kind = "hat";
-      hits.push({ t: fr.t, kind, vel: Math.min(1, fr.rms / (gate * 4)) });
-    }
-  });
-  return hits;
-}
-
-/* ================= drums (synthesized, no samples) ================= */
-let noiseBuf = null;
-function getNoise(ac) {
-  if (noiseBuf) return noiseBuf;
-  noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
-  const d = noiseBuf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  return noiseBuf;
-}
-function drumKick(ac, out, t, vel) {
-  const o = ac.createOscillator(), g = ac.createGain();
-  o.frequency.setValueAtTime(160, t);
-  o.frequency.exponentialRampToValueAtTime(45, t + 0.11);
-  g.gain.setValueAtTime(0.9 * vel, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
-  o.connect(g); g.connect(out); o.start(t); o.stop(t + 0.3);
-}
-function drumSnare(ac, out, t, vel) {
-  const n = ac.createBufferSource(); n.buffer = getNoise(ac);
-  const bp = ac.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 1900; bp.Q.value = 0.8;
-  const g = ac.createGain();
-  g.gain.setValueAtTime(0.6 * vel, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
-  n.connect(bp); bp.connect(g); g.connect(out); n.start(t); n.stop(t + 0.2);
-  const o = ac.createOscillator(), g2 = ac.createGain();
-  o.frequency.value = 190;
-  g2.gain.setValueAtTime(0.35 * vel, t);
-  g2.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
-  o.connect(g2); g2.connect(out); o.start(t); o.stop(t + 0.1);
-}
-function drumHat(ac, out, t, vel) {
-  const n = ac.createBufferSource(); n.buffer = getNoise(ac);
-  const hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 7500;
-  const g = ac.createGain();
-  g.gain.setValueAtTime(0.32 * vel, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
-  n.connect(hp); hp.connect(g); g.connect(out); n.start(t); n.stop(t + 0.08);
-}
-const DRUM_FN = { kick: drumKick, snare: drumSnare, hat: drumHat };
-const HIT_LABEL = { kick: "K", snare: "S", hat: "H" };
-const HIT_COLOR = { kick: "#ff6b6b", snare: "#ffb347", hat: "#6ee7a0" };
-
-function renderHits() {
-  const lane = $("hitLane");
-  if (!lane) return;
-  lane.innerHTML = "";
-  $("hitCount").textContent = hits.length;
-  if (!hits.length) { lane.style.display = "none"; return; }
-  lane.style.display = "flex";
-  const total = Math.max(...hits.map(h => h.t), ...notes.map(n => n.start + n.dur), 0.1);
-  for (const h of hits) {
-    const d = document.createElement("div");
-    d.className = "hit";
-    d.style.left = (h.t / total * 100).toFixed(2) + "%";
-    d.style.background = HIT_COLOR[h.kind];
-    d.title = h.kind + " " + h.t.toFixed(2) + "s";
-    d.textContent = HIT_LABEL[h.kind];
-    lane.appendChild(d);
-  }
-}
-
-/* ================= synth ================= */
-function ensureCtx() {
-  if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "playback" });
-  return AC;
-}
-function setDrive(sh, k) {
-  const n = 128, curve = new Float32Array(n);
-  for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; curve[i] = Math.tanh(x * (1 + k * 6)); }
-  sh.curve = curve;
-}
-function playNotes(list, instKey) {
-  const ac = ensureCtx();
-  stopPlayback();
-  const cfg = INSTRUMENTS[instKey];
-  const master = ac.createGain(); master.gain.value = 0.9; master.connect(ac.destination);
-  const osc = ac.createOscillator(); osc.type = cfg.type;
-  const lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = cfg.cutoff; lp.Q.value = 2;
-  const sh = ac.createWaveShaper(); setDrive(sh, cfg.drive);
-  const g = ac.createGain(); g.gain.value = 0;
-  osc.connect(lp); lp.connect(sh); sh.connect(g); g.connect(master);
-  osc.start();
-  synthNodes = { osc, g, extra: [] };
-  playing = true;
-  $("playBtn").textContent = "Stop";
-  const t0 = ac.currentTime + 0.08;
-  let endT = t0;
-  for (const n of list) {
-    const f = midi2hz(n.midi + (cfg.oct || 0));
-    const st = t0 + n.start, en = st + Math.max(0.08, n.dur * 0.96);
-    osc.frequency.setValueAtTime(f, st);
-    // blow-harder = brighter faster than louder (whistle-synth)
-    lp.frequency.setValueAtTime(cfg.cutoff * (0.5 + n.vel), st);
-    g.gain.setValueAtTime(0.0001, st);
-    g.gain.exponentialRampToValueAtTime(0.001 + 0.5 * n.vel, st + cfg.attack + 0.01);
-    g.gain.setValueAtTime(0.001 + 0.5 * n.vel, Math.max(st + 0.02, en - 0.05));
-    g.gain.exponentialRampToValueAtTime(0.0001, en);
-    endT = Math.max(endT, en);
-  }
-  for (const h of hits) {
-    const fn = DRUM_FN[h.kind];
-    if (fn) { fn(ac, master, t0 + h.t, h.vel); endT = Math.max(endT, t0 + h.t + 0.3); }
-  }
-  setTimeout(() => { if (playing) stopPlayback(); }, (endT - t0 + 0.3) * 1000);
-}
-function stopPlayback() {
-  playing = false;
-  if (synthNodes) { try { synthNodes.osc.stop(); } catch (e) {} synthNodes = null; }
-  const pb = $("playBtn"); if (pb) pb.textContent = "Play as instrument";
-}
-function playOriginal() {
-  if (!rawBuffer) return;
-  const ac = ensureCtx();
-  stopPlayback();
-  const src = ac.createBufferSource();
-  const b = ac.createBuffer(1, rawBuffer.length, ac.sampleRate);
-  b.getChannelData(0).set(rawBuffer);
-  src.buffer = b; src.connect(ac.destination); src.start();
-  synthNodes = { osc: src, g: null };
-  playing = true;
-  $("origBtn").textContent = "Stop";
-  src.onended = () => { playing = false; synthNodes = null; $("origBtn").textContent = "Hear original"; };
-  const ob = $("origBtn"); const old = ob.onclick;
-  ob.onclick = () => { try { src.stop(); } catch (e) {} ob.onclick = old; $("origBtn").textContent = "Hear original"; };
-}
-
-/* ================= record flow ================= */
-async function toggleRecord() {
-  if (recording) { stopRecord(); return; }
-  try {
-    const ac = ensureCtx();
-    await ac.resume();
-    await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET_SRC], { type: "application/javascript" })));
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-    });
-    micStream = stream;
-    const src = ac.createMediaStreamSource(stream);
-    capNode = new AudioWorkletNode(ac, "wb-capture");
-    chunks = [];
-    capNode.port.onmessage = e => {
-      chunks.push(new Float32Array(e.data));
-      let rms = 0; const d = e.data;
-      for (let i = 0; i < d.length; i += 4) rms += d[i] * d[i];
-      rms = Math.sqrt(rms / Math.ceil(d.length / 4));
-      $("meterFill").style.width = Math.min(100, rms * 400).toFixed(1) + "%";
-    };
-    src.connect(capNode);
-    recording = true; recStart = ac.currentTime;
-    $("recBtn").textContent = "Stop"; $("recBtn").classList.add("recording");
-    $("status").textContent = "recording… whistle your tune";
-    recTimerInt = setInterval(() => {
-      const s = Math.floor(ac.currentTime - recStart);
-      $("timer").textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
-    }, 250);
-  } catch (err) {
-    const e = $("err"); e.style.display = "block";
-    e.textContent = "Mic failed: " + err.message;
-  }
-}
-function stopRecord() {
-  recording = false;
-  clearInterval(recTimerInt);
-  $("recBtn").textContent = "Record"; $("recBtn").classList.remove("recording");
-  $("status").textContent = "analyzing…";
-  try { micStream.getTracks().forEach(t => t.stop()); } catch (e) {}
-  try { capNode.disconnect(); } catch (e) {}
-  // assemble
-  let len = 0; for (const c of chunks) len += c.length;
-  rawBuffer = new Float32Array(len);
-  let o = 0; for (const c of chunks) { rawBuffer.set(c, o); o += c.length; }
-  setTimeout(() => {
-    const t0 = performance.now();
-    AC_SR = AC.sampleRate;
-    const res = analyzeTake(rawBuffer, AC.sampleRate, curScale);
-    notes = res.notes; hits = res.hits;
-    const ms = (performance.now() - t0).toFixed(0);
-    $("status").textContent = "analyzed " + notes.length + " notes, " + hits.length + " drum hits in " + ms + " ms";
-    renderNotes(); renderHits();
-    $("notes").style.display = "block";
-    $("playRow").style.display = "flex";
-    window.__whistlebox = { notes, hits };
-  }, 30);
-}
-function renderNotes() {
-  const strip = $("noteStrip"); strip.innerHTML = "";
-  $("noteCount").textContent = notes.length;
-  if (!notes.length) { strip.innerHTML = "<div style='color:var(--dim);font-size:13px;padding:18px'>no clear notes found — try whistling closer and steadier</div>"; return; }
-  const maxDur = Math.max(...notes.map(n => n.dur));
-  for (const n of notes) {
-    const d = document.createElement("div");
-    d.className = "nbar";
-    d.style.height = (30 + 26 * n.vel) + "px";
-    d.style.width = Math.max(26, 120 * n.dur / maxDur) + "px";
-    d.textContent = midiName(n.midi);
-    d.title = midiName(n.midi) + " " + n.dur.toFixed(2) + "s";
-    strip.appendChild(d);
-  }
-}
-
-/* ================= UI wiring ================= */
-for (const k of Object.keys(INSTRUMENTS)) {
-  const b = document.createElement("button");
-  b.textContent = k; if (k === curInst) b.classList.add("sel");
-  b.onclick = () => { curInst = k;
-    [...$("instRow").children].forEach(x => x.classList.remove("sel")); b.classList.add("sel"); };
-  $("instRow").appendChild(b);
-}
-for (const k of Object.keys(SCALES)) {
-  const b = document.createElement("button");
-  b.textContent = k; if (k === curScale) b.classList.add("sel");
-  b.onclick = () => { curScale = k;
-    [...$("scaleRow").children].forEach(x => x.classList.remove("sel")); b.classList.add("sel");
-    if (rawBuffer) {
-      AC_SR = AC.sampleRate;
-      const res = analyzeTake(rawBuffer, AC.sampleRate, curScale);
-      notes = res.notes; hits = res.hits; renderNotes(); renderHits();
-    } };
-  $("scaleRow").appendChild(b);
-}
-$("recBtn").onclick = toggleRecord;
-$("againBtn").onclick = () => {
-  stopPlayback();
-  $("notes").style.display = "none"; $("playRow").style.display = "none";
-  $("timer").textContent = "0:00"; $("status").textContent = "tap record and whistle a tune";
-  $("meterFill").style.width = "0%";
-  notes = []; hits = []; rawBuffer = null;
+</script>
+<script>
+"use strict";
+/* ================= state ================= */
+const $ = id => document.getElementById(id);
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const SCALES = {
+  Chromatic: [0,1,2,3,4,5,6,7,8,9,10,11],
+  Major: [0,2,4,5,7,9,11], Minor: [0,2,3,5,7,8,10],
+  Pentatonic: [0,2,4,7,9], Blues: [0,3,5,6,7,10], Dorian: [0,2,3,5,7,9,10]
 };
-$("playBtn").onclick = () => { playing ? stopPlayback() : playNotes(notes, curInst); };
-$("origBtn").onclick = playOriginal;
+const state = {
+  running: false, ac: null, worklet: null, micStream: null,
+  scale: 'Chromatic', root: 0, mutedNotes: new Set(),
+  stickiness: 0.35, bendMode: 'intelli', bendRange: 2,
+  curNote: -1, curFreq: 0, lastOnset: 0,
+  midiOut: null, midiCh: 0, midiReady: false,
+  pads: [], // {name, midi, takes: [{centroid, dur}], trained}
+  training: null,
+  keyBuf: []
+};
+for (let i = 0; i < 128; i++) { const o = document.createElement('option'); o.value = i; o.textContent = i; $('midiCh').appendChild(o); }
+for (let i = 0; i < 12; i++) { const o = document.createElement('option'); o.value = i; o.textContent = NOTE_NAMES[i]; $('rootSel').appendChild(o); }
 
-/* ================= headless test: synthetic melody + beatbox ================= */
-if (TEST_MODE === "duet") {
-  (function () {
-    const sr = 48000;
-    const mkTone = (f, s) => {
-      const n = Math.floor(sr * s), b = new Float32Array(n);
-      for (let i = 0; i < n; i++) {
-        const t = i / sr;
-        b[i] = 0.5 * Math.sin(2 * Math.PI * f * t) * Math.min(1, i / 200) * Math.min(1, (n - i) / 800)
-             + 0.02 * Math.sin(2 * Math.PI * f * 2.01 * t);
-      }
-      return b;
-    };
-    const mkKick = () => { // low thump: pitch-dropping sine
-      const n = Math.floor(sr * 0.18), b = new Float32Array(n);
-      let ph = 0;
-      for (let i = 0; i < n; i++) {
-        const f = 150 * Math.pow(45 / 150, i / n);
-        ph += 2 * Math.PI * f / sr;
-        b[i] = 0.8 * Math.sin(ph) * Math.exp(-i / (sr * 0.05));
-      }
-      return b;
-    };
-    const mkSnare = () => { // noise burst
-      const n = Math.floor(sr * 0.12), b = new Float32Array(n);
-      for (let i = 0; i < n; i++) b[i] = 0.5 * (Math.random() * 2 - 1) * Math.exp(-i / (sr * 0.03));
-      return b;
-    };
-    const sil = s => new Float32Array(Math.floor(sr * s));
-    // timeline: kick, A4, snare, C5, kick, E5, snare (leading silence like a real take)
-    const parts = [sil(0.3), mkKick(), sil(0.25), mkTone(440, 0.4), sil(0.12), mkSnare(), sil(0.2),
-                   mkTone(523.25, 0.4), sil(0.12), mkKick(), sil(0.25), mkTone(659.25, 0.5),
-                   sil(0.12), mkSnare()];
-    let len = 0; parts.forEach(p => len += p.length);
-    const buf = new Float32Array(len);
-    let o = 0; parts.forEach(p => { buf.set(p, o); o += p.length; });
-    rawBuffer = buf;
-    AC_SR = sr;
-    const res = analyzeTake(buf, sr, "Chromatic");
-    notes = res.notes; hits = res.hits;
-    window.__whistlebox = { notes, hits };
-    renderNotes(); renderHits();
-    $("notes").style.display = "block";
-    $("status").textContent = "test duet: " + notes.length + " notes, " + hits.length + " hits";
-  })();
+/* ================= tabs ================= */
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  $('page-' + t.dataset.page).classList.add('active');
+});
+
+/* ================= audio graph ================= */
+async function startMic() {
+  state.ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+  const ac = state.ac;
+  await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'application/javascript' })));
+  state.micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+  });
+  const src = ac.createMediaStreamSource(state.micStream);
+  state.worklet = new AudioWorkletNode(ac, 'voice-pitch');
+  // inject Pitchy + FFT into worklet scope via prepended message is not possible;
+  // instead we baked them: WORKLET_SRC starts with the vendored libs.
+  src.connect(state.worklet);
+  state.worklet.port.postMessage({ type: 'init' });
+  state.worklet.port.onmessage = onFrame;
+  state.running = true;
+  $('startBtn').textContent = 'Stop';
+  $('startBtn').onclick = stopMic;
+  $('trainBtn').disabled = false;
+  $('status').textContent = 'listening… sing a note or tap a trained pad sound';
+  initSynth();
 }
+
+function stopMic() {
+  state.running = false;
+  try { state.micStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  try { state.worklet.disconnect(); } catch (e) {}
+  try { state.ac.close(); } catch (e) {}
+  state.ac = null;
+  if (state.curNote >= 0) noteOff(state.curNote);
+  $('startBtn').textContent = 'Start microphone';
+  $('startBtn').onclick = startMic;
+  $('trainBtn').disabled = true;
+  $('status').textContent = 'stopped';
+}
+$('startBtn').onclick = startMic;
+
+/* ================= internal synth ================= */
+let synthOsc = null, synthGain = null, synthFilter = null;
+function initSynth() {
+  const ac = state.ac;
+  synthOsc = ac.createOscillator(); synthOsc.type = 'sawtooth';
+  synthFilter = ac.createBiquadFilter(); synthFilter.type = 'lowpass'; synthFilter.frequency.value = 2400;
+  synthGain = ac.createGain(); synthGain.gain.value = 0;
+  synthOsc.connect(synthFilter); synthFilter.connect(synthGain); synthGain.connect(ac.destination);
+  synthOsc.start();
+}
+const midi2hz = m => 440 * Math.pow(2, (m - 69) / 12);
+function synthNoteOn(midi, vel) {
+  if (!state.ac || !$('useSynth').checked) return;
+  synthOsc.frequency.setTargetAtTime(midi2hz(midi), state.ac.currentTime, 0.01);
+  synthGain.gain.setTargetAtTime(0.25 * vel, state.ac.currentTime, 0.01);
+}
+function synthNoteOff() {
+  if (!state.ac) return;
+  synthGain.gain.setTargetAtTime(0, state.ac.currentTime, 0.03);
+}
+
+/* ================= MIDI ================= */
+$('midiBtn').onclick = async () => {
+  if (!navigator.requestMIDIAccess) { $('midiStatus').textContent = 'Web MIDI not supported in this browser.'; return; }
+  try {
+    const access = await navigator.requestMIDIAccess();
+    const outs = [...access.outputs.values()];
+    const sel = $('midiOut');
+    sel.innerHTML = '<option value="">(no MIDI — internal synth only)</option>';
+    outs.forEach((o, i) => {
+      const op = document.createElement('option'); op.value = i; op.textContent = o.name; sel.appendChild(op);
+    });
+    state.midiAccess = access; state.midiReady = true;
+    $('midiStatus').textContent = outs.length ? outs.length + ' output(s) found.' : 'no MIDI outputs found — add a virtual port.';
+  } catch (e) { $('midiStatus').textContent = 'MIDI access denied.'; }
+};
+$('midiOut').onchange = e => {
+  const outs = [...state.midiAccess.outputs.values()];
+  state.midiOut = outs[+e.target.value] || null;
+};
+$('midiCh').onchange = e => state.midiCh = +e.target.value;
+function midiSend(bytes) {
+  if (state.midiOut) try { state.midiOut.send(bytes); } catch (e) {}
+}
+function noteOn(midi, vel) {
+  midiSend([0x90 | state.midiCh, midi, Math.round(vel * 127)]);
+  synthNoteOn(midi, vel);
+  const log = $('midiLog');
+  const s = document.createElement('span'); s.className = 'midi-note';
+  s.textContent = NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
+  log.prepend(s);
+  while (log.children.length > 12) log.lastChild.remove();
+}
+function noteOff(midi) {
+  midiSend([0x80 | state.midiCh, midi, 0]);
+  synthNoteOff();
+}
+function pitchBend(semitones) {
+  const v = Math.max(-1, Math.min(1, semitones / state.bendRange));
+  const val = Math.round(8192 + v * 8191);
+  midiSend([0xE0 | state.midiCh, val & 0x7f, (val >> 7) & 0x7f]);
+}
+function sendCC(cc, val) {
+  midiSend([0xB0 | state.midiCh, cc, Math.max(0, Math.min(127, Math.round(val * 127)))]);
+}
+
+/* ================= pitch → notes ================= */
+const hz2midi = h => 69 + 12 * Math.log2(h / 440);
+function snapToScale(mf) {
+  const iv = SCALES[state.scale];
+  const base = Math.round(mf);
+  let best = base, bestD = 1e9;
+  for (let o = -2; o <= 2; o++) for (const s of iv) {
+    const m = Math.floor(base / 12) * 12 + o * 12 + s + state.root;
+    const d = Math.abs(m - mf);
+    if (d < bestD) { bestD = d; best = m; }
+  }
+  return best;
+}
+let smoothF = 0;
+function onFrame(e) {
+  const d = e.data;
+  if (d.type !== 'frame') return;
+  $('levelVal').textContent = d.rms.toFixed(3);
+  drawMeters(d);
+
+  // trigger detection first (percussive beats pitch)
+  if (checkTriggers(d)) return;
+
+  const tone = d.c >= 0.82 && d.rms > 0.015 && d.f > 60 && d.f < 4000;
+  if (!tone) {
+    if (state.curNote >= 0 && d.rms < 0.008) { noteOff(state.curNote); state.curNote = -1; }
+    return;
+  }
+  // stickiness: smooth frequency
+  const a = 1 - state.stickiness * 0.9;
+  smoothF = smoothF ? smoothF + a * (d.f - smoothF) : d.f;
+  let mf = hz2midi(smoothF);
+  const target = snapToScale(mf);
+  if (state.mutedNotes.has(target % 12)) return;
+
+  // pitch bend
+  if (state.bendMode !== 'off' && state.curNote >= 0) {
+    const anchor = state.bendMode === 'intelli' ? state.curNote : null;
+    const ref = anchor !== null ? anchor : target;
+    const semis = mf - ref;
+    if (Math.abs(semis) < state.bendRange) pitchBend(semis);
+  }
+
+  if (target !== state.curNote) {
+    if (state.curNote >= 0) noteOff(state.curNote);
+    state.curNote = target;
+    noteOn(target, Math.min(1, d.rms * 6));
+    state.keyBuf.push(target % 12);
+    if (state.keyBuf.length > 32) state.keyBuf.shift();
+  } else {
+    state.curFreq = d.f;
+  }
+  drawWheel(d.f);
+}
+
+/* ================= note wheel ================= */
+const wheel = $('noteWheel'), wctx = wheel.getContext('2d');
+function drawWheel(freq) {
+  const W = 300, C = 150, R = 120;
+  wctx.clearRect(0, 0, W, W);
+  const cur = freq > 0 ? ((Math.round(hz2midi(freq)) % 12) + 12) % 12 : -1;
+  for (let i = 0; i < 12; i++) {
+    const a0 = (i / 12) * Math.PI * 2 - Math.PI / 2;
+    const a1 = ((i + 1) / 12) * Math.PI * 2 - Math.PI / 2;
+    wctx.beginPath(); wctx.moveTo(C, C);
+    wctx.arc(C, C, R, a0, a1); wctx.closePath();
+    const muted = state.mutedNotes.has(i);
+    wctx.fillStyle = muted ? '#1a1c22' : (i === cur ? '#3a7d5d' : '#1e2129');
+    wctx.fill();
+    wctx.strokeStyle = '#2a2e3a'; wctx.stroke();
+    const am = (a0 + a1) / 2;
+    wctx.fillStyle = muted ? '#555' : '#cfe';
+    wctx.font = '13px system-ui'; wctx.textAlign = 'center'; wctx.textBaseline = 'middle';
+    wctx.fillText(NOTE_NAMES[i], C + Math.cos(am) * (R - 22), C + Math.sin(am) * (R - 22));
+  }
+  // centre: current note name
+  wctx.fillStyle = '#e8eaf0'; wctx.font = 'bold 26px system-ui';
+  wctx.fillText(cur >= 0 ? NOTE_NAMES[cur] : '–', C, C);
+}
+wheel.onclick = e => {
+  const r = wheel.getBoundingClientRect();
+  const x = (e.clientX - r.left) * (300 / r.width) - 150;
+  const y = (e.clientY - r.top) * (300 / r.height) - 150;
+  if (Math.hypot(x, y) > 120) return;
+  let ang = Math.atan2(y, x) + Math.PI / 2;
+  if (ang < 0) ang += Math.PI * 2;
+  const seg = Math.floor(ang / (Math.PI * 2) * 12) % 12;
+  if (state.mutedNotes.has(seg)) state.mutedNotes.delete(seg); else state.mutedNotes.add(seg);
+  drawWheel(state.curFreq);
+};
+drawWheel(0);
+
+/* ================= vowel meters → CC ================= */
+function vowelFeatures(d) {
+  // crude vowel estimate from centroid + rms bands; aaa=open/low, eee=bright/high, ooo=round/mid
+  const c = d.centroid;
+  const aaa = Math.max(0, 1 - Math.abs(c - 900) / 900);
+  const ooo = Math.max(0, 1 - Math.abs(c - 500) / 500);
+  const eee = Math.max(0, 1 - Math.abs(c - 2400) / 1400);
+  const env = Math.min(1, d.rms * 8);
+  return { aaa, ooo, eee, env };
+}
+function drawMeter(id, v) {
+  const c = $(id), x = c.getContext('2d');
+  x.clearRect(0, 0, 64, 64);
+  x.beginPath(); x.arc(32, 32, 26, 0, Math.PI * 2);
+  x.strokeStyle = '#2a2e3a'; x.lineWidth = 8; x.stroke();
+  x.beginPath(); x.arc(32, 32, 26, -Math.PI / 2, -Math.PI / 2 + v * Math.PI * 2);
+  x.strokeStyle = '#3a7d5d'; x.lineWidth = 8; x.stroke();
+}
+let lastCC = 0;
+function drawMeters(d) {
+  const v = vowelFeatures(d);
+  drawMeter('mAaa', v.aaa); drawMeter('mOoo', v.ooo);
+  drawMeter('mEee', v.eee); drawMeter('mEnv', v.env);
+  const now = performance.now();
+  if (now - lastCC > 60 && d.rms > 0.01) {
+    lastCC = now;
+    sendCC(+$('ccAaa').textContent, v.aaa);
+    sendCC(+$('ccOoo').textContent, v.ooo);
+    sendCC(+$('ccEee').textContent, v.eee);
+    sendCC(+$('ccEnv').textContent, v.env);
+  }
+}
+
+/* ================= triggers ================= */
+function initPads() {
+  const wrap = $('pads'); wrap.innerHTML = '';
+  const sel = $('trainPad'); sel.innerHTML = '';
+  const defaults = [['kick', 36], ['snare', 38], ['hat', 42], ['clap', 39]];
+  state.pads = defaults.map(([name, midi], i) => ({ name, midi, takes: [], trained: false }));
+  state.pads.forEach((p, i) => {
+    const d = document.createElement('div'); d.className = 'pad'; d.id = 'pad' + i;
+    d.innerHTML = '<div class="pname">' + p.name + '</div><div>C' + (i + 1) + ' · ' + p.midi + '</div>';
+    wrap.appendChild(d);
+    const o = document.createElement('option'); o.value = i; o.textContent = p.name; sel.appendChild(o);
+  });
+}
+initPads();
+
+let onsetBuf = [];
+function checkTriggers(d) {
+  // flux-based onset; classify against trained pad templates
+  onsetBuf.push(d);
+  if (onsetBuf.length > 30) onsetBuf.shift();
+  const trained = state.pads.filter(p => p.trained);
+  if (!trained.length || !state.running) return false;
+  const med = [...onsetBuf].map(x => x.flux).sort((a, b) => a - b)[Math.floor(onsetBuf.length / 2)] || 0;
+  if (d.flux > Math.max(0.5, med * 3) && d.c < 0.6 && d.rms > 0.03) {
+    const now = performance.now();
+    if (now - state.lastOnset < 120) return true;
+    state.lastOnset = now;
+    // nearest template by centroid
+    let best = null, bestD = 1e9;
+    for (const p of trained) {
+      const tc = p.takes.reduce((s, t) => s + t.centroid, 0) / p.takes.length;
+      const dd = Math.abs(tc - d.centroid);
+      if (dd < bestD) { bestD = dd; best = p; }
+    }
+    if (best && bestD < 2500) {
+      const idx = state.pads.indexOf(best);
+      const el = $('pad' + idx);
+      el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 120);
+      const vel = Math.min(1, d.rms * 5);
+      midiSend([0x90 | state.midiCh, best.midi, Math.round(vel * 127)]);
+      setTimeout(() => midiSend([0x80 | state.midiCh, best.midi, 0]), 90);
+      if ($('useSynth').checked) playPadSound(best.name, vel);
+      return true;
+    }
+  }
+  return false;
+}
+function playPadSound(name, vel) {
+  const ac = state.ac; if (!ac) return;
+  const t = ac.currentTime;
+  if (name === 'kick') {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.setValueAtTime(160, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.1);
+    g.gain.setValueAtTime(0.8 * vel, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.3);
+  } else {
+    const len = ac.sampleRate * 0.15, b = ac.createBuffer(1, len, ac.sampleRate);
+    const chd = b.getChannelData(0);
+    for (let i = 0; i < len; i++) chd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ac.sampleRate * 0.03));
+    const n = ac.createBufferSource(); n.buffer = b;
+    const f = ac.createBiquadFilter(); f.type = name === 'hat' ? 'highpass' : 'bandpass';
+    f.frequency.value = name === 'hat' ? 7000 : 1900;
+    const g = ac.createGain(); g.gain.value = 0.5 * vel;
+    n.connect(f); f.connect(g); g.connect(ac.destination); n.start(t);
+  }
+}
+
+/* ---- training ---- */
+$('trainBtn').onclick = () => {
+  const i = +$('trainPad').value;
+  const pad = state.pads[i];
+  pad.name = $('padName').value || pad.name;
+  pad.midi = +$('padMidi').value || pad.midi;
+  state.training = { pad, takes: [], lastTake: 0 };
+  $('trainStatus').textContent = 'make the "' + pad.name + '" sound 5 times…';
+  $('trainBtn').disabled = true;
+};
+// training capture hooks into onFrame via a flag checked in checkTriggers path:
+// simpler: dedicated listener set while training
+const origCheck = checkTriggers;
+checkTriggers = function (d) {
+  const tr = state.training;
+  if (tr && state.running) {
+    onsetBuf.push(d); if (onsetBuf.length > 30) onsetBuf.shift();
+    const med = [...onsetBuf].map(x => x.flux).sort((a, b) => a - b)[Math.floor(onsetBuf.length / 2)] || 0;
+    if (d.flux > Math.max(0.5, med * 3) && d.c < 0.6 && d.rms > 0.03) {
+      const now = performance.now();
+      if (now - tr.lastTake > 250) {
+        tr.lastTake = now;
+        tr.takes.push({ centroid: d.centroid });
+        $('trainStatus').textContent = 'take ' + tr.takes.length + ' / 5';
+        if (tr.takes.length >= 5) {
+          tr.pad.takes = tr.takes; tr.pad.trained = true;
+          const el = $('pad' + state.pads.indexOf(tr.pad));
+          el.classList.add('trained');
+          el.innerHTML = '<div class="pname">' + tr.pad.name + '</div><div>trained · ' + tr.pad.midi + '</div>';
+          $('trainStatus').textContent = '"' + tr.pad.name + '" trained.';
+          state.training = null;
+          $('trainBtn').disabled = false;
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+  return origCheck(d);
+};
+
+/* ================= key tab ================= */
+$('stick').oninput = e => state.stickiness = +e.target.value / 100;
+$('bendMode').onchange = e => state.bendMode = e.target.value;
+$('bendRange').onchange = e => state.bendRange = +e.target.value;
+$('scaleSel').onchange = e => { state.scale = e.target.value; };
+$('rootSel').onchange = e => { state.root = +e.target.value; };
+$('detectKeyBtn').onclick = () => {
+  if (!state.keyBuf.length) { $('keyResult').textContent = 'sing something first.'; return; }
+  // simple: most common pitch class -> major/minor guess
+  const counts = {};
+  state.keyBuf.forEach(p => counts[p] = (counts[p] || 0) + 1);
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+  $('keyResult').textContent = 'most sung: ' + NOTE_NAMES[top] + ' — try ' + NOTE_NAMES[top] + ' Major or Minor.';
+};
+
+/* ================= test hooks ================= */
+window.__vox = { state, snapToScale, hz2midi };
 </script>
 </body>
 </html>
