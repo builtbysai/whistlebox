@@ -64,6 +64,7 @@
     <h3>Input</h3>
     <div class="row">
       <button id="startBtn">Start microphone</button>
+      <button id="calBtn" disabled>Calibrate room</button>
       <label>Level <span id="levelVal">—</span></label>
       <button id="capBtn" disabled>● Capture MIDI</button>
     </div>
@@ -1353,6 +1354,7 @@ async function startMic() {
   $('startBtn').onclick = stopMic;
   $('trainBtn').disabled = false;
   $('capBtn').disabled = false;
+  $('calBtn').disabled = false;
   $('status').textContent = 'listening… sing a note or tap a trained pad sound';
   initSynth();
 }
@@ -1368,6 +1370,7 @@ function stopMic() {
   $('startBtn').onclick = startMic;
   $('trainBtn').disabled = true;
   $('capBtn').disabled = true;
+  $('calBtn').disabled = true;
   $('status').textContent = 'stopped';
 }
 $('startBtn').onclick = startMic;
@@ -1471,14 +1474,15 @@ function onFrame(e) {
   const d = e.data;
   if (d.type !== 'frame') return;
   $('levelVal').textContent = d.rms.toFixed(3);
+  state.lastRms = d.rms;
   drawMeters(d);
 
   // trigger detection first (percussive beats pitch)
   if (checkTriggers(d)) return;
 
-  const tone = d.c >= 0.82 && d.rms > 0.015 && d.f > 60 && d.f < 4000;
+  const tone = d.c >= 0.82 && d.rms > noiseFloor && d.f > 60 && d.f < 4000;
   if (!tone) {
-    if (state.curNote >= 0 && d.rms < 0.008) { noteOff(state.curNote); state.curNote = -1; }
+    if (state.curNote >= 0 && d.rms < noiseFloor * 0.5) { noteOff(state.curNote); state.curNote = -1; }
     return;
   }
   // stickiness: smooth frequency
@@ -1771,7 +1775,23 @@ function downloadMidi() {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
-/* ================= assign tab ================= */
+/* ================= calibration ================= */
+let noiseFloor = 0.015;
+$('calBtn').onclick = () => {
+  if (!state.running) return;
+  $('status').textContent = 'stay quiet… measuring room noise';
+  $('calBtn').disabled = true;
+  let peak = 0, n = 0;
+  const iv = setInterval(() => {
+    peak = Math.max(peak, state.lastRms || 0);
+    if (++n >= 40) {
+      clearInterval(iv);
+      noiseFloor = Math.max(peak * 1.5, 0.005);
+      $('status').textContent = 'calibrated. noise floor set.';
+      $('calBtn').disabled = false;
+    }
+  }, 50);
+};
 const ccMap = { aaa: 74, ooo: 71, eee: 76, env: 11 };
 const ccThresh = { aaa: 0.1, ooo: 0.1, eee: 0.1, env: 0.05 };
 const ccBypass = { aaa: false, ooo: false, eee: false, env: false };
