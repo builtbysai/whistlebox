@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Whistlebox — whistle into instruments</title>
+<title>Whistlebox — record, then play it as instruments</title>
 <style>
   :root { --bg: #0d0f14; --panel: #161a23; --ink: #e8e6df; --dim: #8a8fa0;
           --acc: #ffb347; --acc2: #6ee7a0; --bad: #ff6b6b; }
@@ -18,15 +18,10 @@
   header p { color: var(--dim); font-size: 13px; margin-top: 4px; }
   #stage { width: min(480px, 100%); background: var(--panel); border-radius: 18px; padding: 22px 20px;
            box-shadow: 0 12px 40px rgba(0,0,0,.45); }
-  #noteName { font-size: 64px; font-weight: 800; text-align: center; letter-spacing: 1px; min-height: 78px; }
-  #noteName small { font-size: 22px; color: var(--dim); font-weight: 600; }
-  #freq { text-align: center; color: var(--dim); font-size: 13px; min-height: 18px; font-variant-numeric: tabular-nums; }
-  #meterWrap { margin: 14px 0 6px; }
-  #meter { height: 10px; background: #0a0c10; border-radius: 6px; overflow: hidden; position: relative; }
-  #meterFill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--acc2), var(--acc)); border-radius: 6px;
-               transition: width 60ms linear; }
-  #gateMark { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(255,255,255,.55); }
-  #meterLabel { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); margin-top: 4px; }
+  #timer { font-size: 44px; font-weight: 800; text-align: center; font-variant-numeric: tabular-nums; min-height: 56px; }
+  #status { text-align: center; color: var(--dim); font-size: 13px; min-height: 20px; margin-bottom: 6px; }
+  #meter { height: 10px; background: #0a0c10; border-radius: 6px; overflow: hidden; margin: 10px 0 4px; }
+  #meterFill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--acc2), var(--acc)); border-radius: 6px; }
   .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
   .row label { font-size: 11px; color: var(--dim); width: 100%; text-transform: uppercase; letter-spacing: 1px; }
   button { font: inherit; color: var(--ink); background: #222839; border: 1px solid #2e3650; border-radius: 12px;
@@ -34,72 +29,51 @@
   button:active { transform: scale(.97); }
   button.sel { background: var(--acc); border-color: var(--acc); color: #201503; }
   button:disabled { opacity: .45; cursor: default; }
-  #startBtn { font-size: 18px; padding: 14px; background: var(--acc2); border-color: var(--acc2); color: #0c2317;
-              margin-top: 14px; width: 100%; }
-  #startBtn.live { background: var(--bad); border-color: var(--bad); color: #2b0d0d; }
-  #latency { margin-top: 12px; text-align: center; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
-  #latency b { color: var(--acc2); }
-  #hint { margin-top: 10px; font-size: 12px; color: var(--dim); text-align: center; line-height: 1.5; }
+  #recBtn { font-size: 18px; padding: 16px; margin-top: 12px; width: 100%; background: var(--bad);
+            border-color: var(--bad); color: #2b0d0d; }
+  #recBtn.recording { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+  #notes { margin-top: 14px; display: none; }
+  #noteStrip { display: flex; gap: 4px; align-items: flex-end; min-height: 64px; margin-top: 8px;
+               background: #0a0c10; border-radius: 10px; padding: 10px; overflow-x: auto; }
+  .nbar { background: linear-gradient(180deg, var(--acc), #d98a2b); border-radius: 5px 5px 2px 2px;
+          min-width: 26px; display: flex; align-items: flex-end; justify-content: center;
+          padding-bottom: 4px; font-size: 10px; font-weight: 700; color: #201503; flex: none; }
+  #playRow { display: none; }
   #err { margin-top: 10px; font-size: 13px; color: var(--bad); text-align: center; display: none; }
-  @media (max-width: 380px) { #noteName { font-size: 52px; } }
+  #hint { margin-top: 12px; font-size: 12px; color: var(--dim); text-align: center; line-height: 1.5; }
+  @media (max-width: 380px) { #timer { font-size: 36px; } }
 </style>
 </head>
 <body>
 <header>
   <h1>WHISTLE<span>BOX</span></h1>
-  <p>whistle in &mdash; instruments out. v0.1</p>
+  <p>record your whistle, hear it as instruments. v0.2</p>
 </header>
 <div id="stage">
-  <div id="noteName">&mdash;</div>
-  <div id="freq"></div>
-  <div id="meterWrap">
-    <div id="meter"><div id="meterFill"></div><div id="gateMark"></div></div>
-    <div id="meterLabel"><span>input level</span><span>noise gate</span></div>
+  <div id="timer">0:00</div>
+  <div id="status">tap record and whistle a tune</div>
+  <div id="meter"><div id="meterFill"></div></div>
+  <button id="recBtn">Record</button>
+
+  <div id="notes">
+    <div class="row"><label>what we heard (<span id="noteCount">0</span> notes)</label></div>
+    <div id="noteStrip"></div>
+    <div class="row" id="instRow"><label>instrument</label></div>
+    <div class="row" id="scaleRow"><label>scale</label></div>
+    <div class="row" id="playRow">
+      <button id="playBtn">Play as instrument</button>
+      <button id="origBtn">Hear original</button>
+    </div>
+    <div class="row"><button id="againBtn">Record again</button></div>
   </div>
-  <div class="row" id="instRow"><label>instrument</label></div>
-  <div class="row" id="scaleRow"><label>scale</label></div>
-  <button id="startBtn">Start whistling</button>
-  <div id="latency">round-trip latency: <b>&mdash;</b></div>
-  <div id="hint">Headphones on. Whistle a tune &mdash; blow harder for brighter tone.<br>The gate learns your room noise automatically on start.</div>
+
   <div id="err"></div>
+  <div id="hint">No headphones needed. Record first, pick an instrument, then play it back.</div>
 </div>
 
 <script>
 "use strict";
-/* ================= config ================= */
-const WIN = 1024, HOP = 256;            // analysis window / hop (samples)
-const CLARITY_MIN = 0.82;               // pitch confidence to count as tone
-const HOPS_ON = 4, HOPS_OFF = 8;        // note start / release debounce
-const MED = 3;                          // median smoothing over N freqs
-const OCT_GUARD = 6;                    // semitones: prefer continuity
-const HYST_CENTS = 25;                  // scale-snap hysteresis
-const TEST_FREQ = new URLSearchParams(location.search).get("test"); // ?test=880
-
-const SCALES = {
-  "Chromatic": [0,1,2,3,4,5,6,7,8,9,10,11],
-  "Major": [0,2,4,5,7,9,11],
-  "Minor": [0,2,3,5,7,8,10],
-  "Penta": [0,2,4,7,9],
-};
-const INSTRUMENTS = {
-  "Lead":  { type: "sawtooth", cutoff: 3200, drive: 0.35, attack: 0.012, sub: 0 },
-  "Flute": { type: "sine",     cutoff: 2400, drive: 0.10, attack: 0.060, sub: 0 },
-  "Bass":  { type: "square",   cutoff: 900,  drive: 0.45, attack: 0.010, sub: -12 },
-};
-const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-
-/* ================= state ================= */
-let AC = null, worklet = null, synth = null, analyserView = null;
-let running = false, roomFloor = 0.004, gate = 0.02;
-let curScale = "Major", curInst = "Lead";
-let note = null;             // { midi, freq }
-let hopBuf = [];             // recent {freq, clarity, rms}
-let onCount = 0, offCount = 0;
-let lastUiNote = "";
-const $ = id => document.getElementById(id);
-
-/* ================= worklet source ================= */
-const WORKLET_SRC = `
 'use strict';
 
 function FFT(size) {
@@ -109,7 +83,7 @@ function FFT(size) {
 
   this._csize = size << 1;
 
-  // NOTE: Use of \`var\` is intentional for old V8 versions
+  // NOTE: Use of `var` is intentional for old V8 versions
   var table = new Array(this.size * 2);
   for (var i = 0; i < table.length; i += 2) {
     const angle = Math.PI * i / this.size;
@@ -125,7 +99,7 @@ function FFT(size) {
 
   // Calculate initial step's width:
   //   * If we are full radix-4 - it is 2x smaller to give inital len=8
-  //   * Otherwise it is the same as \`power\` to give len=4
+  //   * Otherwise it is the same as `power` to give len=4
   this._width = power % 2 === 0 ? power - 1 : power;
 
   // Pre-compute bit-reversal patterns
@@ -216,8 +190,8 @@ FFT.prototype.inverseTransform = function inverseTransform(out, data) {
 
 // radix-4 implementation
 //
-// NOTE: Uses of \`var\` are intentional for older V8 version that do not
-// support both \`let compound assignments\` and \`const phi\`
+// NOTE: Uses of `var` are intentional for older V8 version that do not
+// support both `let compound assignments` and `const phi`
 FFT.prototype._transform4 = function _transform4() {
   var out = this._out;
   var size = this._csize;
@@ -668,7 +642,7 @@ class Autocorrelator {
   }
 
   /**
-   * A helper method to create an {@link Autocorrelator} using \`number[]\`
+   * A helper method to create an {@link Autocorrelator} using `number[]`
    * buffers.
    *
    * @param inputLength {number} the input array length to support
@@ -683,7 +657,7 @@ class Autocorrelator {
    * given length.
    *
    * @param inputLength {number} the input array length to support. This
-   * \`Autocorrelator\` will only support operation on arrays of this length.
+   * `Autocorrelator` will only support operation on arrays of this length.
    * @param bufferSupplier {(length: number) => T} the function to use for
    * creating buffers, accepting the length of the buffer to create and
    * returning a new buffer of that length. The values of the returned buffer
@@ -691,7 +665,7 @@ class Autocorrelator {
    */
   constructor(inputLength, bufferSupplier) {
     if (inputLength < 1) {
-      throw new Error(\`Input length must be at least one\`);
+      throw new Error(`Input length must be at least one`);
     }
     this._inputLength = inputLength;
     // We need to double the input length to get correct results, and the FFT
@@ -718,12 +692,12 @@ class Autocorrelator {
    * @param input {ArrayLike<number>} the input data to autocorrelate
    * @param output {T} the output buffer into which to write the autocorrelated
    * data. If not provided, a new buffer will be created.
-   * @returns {T} \`output\`
+   * @returns {T} `output`
    */
   autocorrelate(input, output = this._bufferSupplier(input.length)) {
     if (input.length !== this._inputLength) {
       throw new Error(
-        \`Input must have length \${this._inputLength} but had length \${input.length}\`,
+        `Input must have length ${this._inputLength} but had length ${input.length}`,
       );
     }
     // Step 0: pad the input array with zeros
@@ -809,12 +783,12 @@ function getKeyMaximumIndices(input) {
  * This is described in section 5 of the MPM paper as a way to refine the
  * position of the maximum.
  *
- * @param index {number} the chosen key maximum index. This must be between \`1\`
- * and \`data.length - 2\`, inclusive, since it and its two neighbors need to be
- * valid indexes of \`data\`.
- * @param data {ArrayLike<number>} the input array from which \`index\` was chosen
+ * @param index {number} the chosen key maximum index. This must be between `1`
+ * and `data.length - 2`, inclusive, since it and its two neighbors need to be
+ * valid indexes of `data`.
+ * @param data {ArrayLike<number>} the input array from which `index` was chosen
  * @returns {[number, number]} a pair consisting of the refined key maximum index and the
- * interpolated value of \`data\` at that index (the latter of which is used as a
+ * interpolated value of `data` at that index (the latter of which is used as a
  * measure of clarity)
  */
 function refineResultIndex(index, data) {
@@ -892,7 +866,7 @@ class PitchDetector {
   }
 
   /**
-   * A helper method to create an {@link PitchDetector} using \`number[]\` buffers.
+   * A helper method to create an {@link PitchDetector} using `number[]` buffers.
    *
    * @param inputLength {number} the input array length to support
    * @returns {PitchDetector<number[]>}
@@ -906,7 +880,7 @@ class PitchDetector {
    * given length.
    *
    * @param inputLength {number} the input array length to support. This
-   * \`PitchDetector\` will only support operation on arrays of this length.
+   * `PitchDetector` will only support operation on arrays of this length.
    * @param bufferSupplier {(inputLength: number) => T} the function to use for
    * creating buffers, accepting the length of the buffer to create and
    * returning a new buffer of that length. The values of the returned buffer
@@ -928,7 +902,7 @@ class PitchDetector {
 
   /**
    * Sets the clarity threshold used when identifying the correct pitch (the constant
-   * \`k\` from the MPM paper). The value must be between 0 (exclusive) and 1
+   * `k` from the MPM paper). The value must be between 0 (exclusive) and 1
    * (inclusive), with the most suitable range being between 0.8 and 1.
    *
    * @param threshold {number} the clarity threshold
@@ -942,8 +916,8 @@ class PitchDetector {
 
   /**
    * Sets the minimum detectable volume, as an absolute number between 0 and
-   * \`maxInputAmplitude\`, inclusive, to consider in a sample when detecting the
-   * pitch. If a sample fails to meet this minimum volume, \`findPitch\` will
+   * `maxInputAmplitude`, inclusive, to consider in a sample when detecting the
+   * pitch. If a sample fails to meet this minimum volume, `findPitch` will
    * return a clarity of 0.
    *
    * Volume is calculated as the RMS (root mean square) of the input samples.
@@ -957,7 +931,7 @@ class PitchDetector {
       volume > this._maxInputAmplitude
     ) {
       throw new Error(
-        \`minVolumeAbsolute must be a number in the range [0, \${this._maxInputAmplitude}]\`,
+        `minVolumeAbsolute must be a number in the range [0, ${this._maxInputAmplitude}]`,
       );
     }
     this._minVolumeAbsolute = volume;
@@ -966,7 +940,7 @@ class PitchDetector {
   /**
    * Sets the minimum volume using a decibel measurement. Must be less than or
    * equal to 0: 0 indicates the loudest possible sound (see
-   * \`maxInputAmplitude\`), -10 is a sound with a tenth of the volume of the
+   * `maxInputAmplitude`), -10 is a sound with a tenth of the volume of the
    * loudest possible sound, etc.
    *
    * Volume is calculated as the RMS (root mean square) of the input samples.
@@ -1007,8 +981,8 @@ class PitchDetector {
    * collected
    * @returns {[number, number]} the detected pitch, in Hz, followed by the
    * clarity. If a pitch cannot be determined from the input, such as if the
-   * volume is too low (see \`minVolumeAbsolute\` and \`minVolumeDecibels\`), this
-   * will be \`[0, 0]\`.
+   * volume is too low (see `minVolumeAbsolute` and `minVolumeDecibels`), this
+   * will be `[0, 0]`.
    */
   findPitch(input, sampleRate) {
     // If the highest key maximum is less than the minimum volume, we don't need
@@ -1101,7 +1075,7 @@ class PitchDetector {
  * Rounds up the input to the next power of 2.
  *
  * @param {number} v
- * @returns {number} the next power of 2 at least as large as \`v\`
+ * @returns {number} the next power of 2 at least as large as `v`
  */
 function ceilPow2(v) {
   // https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
@@ -1115,206 +1089,260 @@ function ceilPow2(v) {
   return v;
 }
 
+/* ================= config ================= */
+const WIN = 1024, HOP = 256;
+const CLARITY_MIN = 0.82;
+const HOPS_ON = 4, HOPS_OFF = 8;
+const MIN_NOTE_S = 0.09;
+const TEST_MODE = new URLSearchParams(location.search).get("test"); // ?test=melody
 
-class WhistleProc extends AudioWorkletProcessor {
-  constructor() {
-    super();
-    this.det = PitchDetector.forFloat32Array(${WIN});
-    this.det.clarityThreshold = ${CLARITY_MIN};
-    this.buf = new Float32Array(${WIN});
-    this.pos = 0;
-    this.hop = 0;
-  }
+const SCALES = {
+  "Chromatic": [0,1,2,3,4,5,6,7,8,9,10,11],
+  "Major": [0,2,4,5,7,9,11],
+  "Minor": [0,2,3,5,7,8,10],
+  "Penta": [0,2,4,7,9],
+};
+const INSTRUMENTS = {
+  "Lead":  { type: "sawtooth", cutoff: 3200, drive: 0.35, attack: 0.012 },
+  "Flute": { type: "sine",     cutoff: 2400, drive: 0.10, attack: 0.060 },
+  "Bass":  { type: "square",   cutoff: 900,  drive: 0.45, attack: 0.010, oct: -12 },
+};
+const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const $ = id => document.getElementById(id);
+const hz2midi = f => 69 + 12 * Math.log2(f / 440);
+const midi2hz = m => 440 * Math.pow(2, (m - 69) / 12);
+const midiName = m => NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+
+/* ================= state ================= */
+let AC = null, capNode = null, micStream = null;
+let chunks = [], recording = false, recStart = 0, recTimerInt = null;
+let rawBuffer = null;   // Float32Array of the take
+let notes = [];         // detected [{midi, start, dur, vel}]
+let curScale = "Major", curInst = "Lead";
+let synthNodes = null, playing = false;
+
+/* ================= capture worklet ================= */
+const WORKLET_SRC = `
+class WBCapture extends AudioWorkletProcessor {
   process(inputs) {
-    const ch = inputs[0] && inputs[0][0];
-    if (!ch) return true;
-    for (let i = 0; i < ch.length; i++) {
-      this.buf[this.pos++] = ch[i];
-      if (this.pos === ${WIN}) {
-        // shift by HOP, keep WIN-HOP history
-        this.buf.copyWithin(0, ${HOP});
-        this.pos = ${WIN} - ${HOP};
-        this.hop++;
-        if (this.hop % 1 === 0) {
-          let rms = 0;
-          for (let j = 0; j < ${WIN}; j++) rms += this.buf[j] * this.buf[j];
-          rms = Math.sqrt(rms / ${WIN});
-          let f = 0, c = 0;
-          if (rms > 1e-4) { const r = this.det.findPitch(this.buf, sampleRate); f = r[0]; c = r[1]; }
-          this.port.postMessage({ f, c, rms });
-        }
-      }
-    }
+    var ch = inputs[0] && inputs[0][0];
+    if (ch) this.port.postMessage(ch.slice(0));
     return true;
   }
 }
-registerProcessor("whistle-proc", WhistleProc);
+registerProcessor("wb-capture", WBCapture);
 `;
 
-/* ================= synth (free-running, never reads mic) ================= */
-function makeSynth(ac, cfg) {
-  const osc = ac.createOscillator(); osc.type = cfg.type;
-  const sub = ac.createOscillator(); sub.type = "sine";
-  const lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = cfg.cutoff; lp.Q.value = 2;
-  const sh = ac.createWaveShaper();
-  const g = ac.createGain(); g.gain.value = 0;
-  const vib = ac.createOscillator(); vib.frequency.value = 5.5;
-  const vibG = ac.createGain(); vibG.gain.value = 0;
-  vib.connect(vibG); vibG.connect(osc.frequency);
-  osc.connect(lp); sub.connect(lp); lp.connect(sh); sh.connect(g); g.connect(ac.destination);
-  osc.start(); sub.start(); vib.start();
-  setDrive(sh, cfg.drive);
-  return { osc, sub, lp, sh, g, vibG, cfg,
-    setFreq(f) {
-      const t = ac.currentTime;
-      osc.frequency.setTargetAtTime(f, t, 0.008);
-      sub.frequency.setTargetAtTime(f / 2, t, 0.008);
-    },
-    gateOn(vel) {
-      const t = ac.currentTime, a = cfg.attack;
-      g.gain.cancelScheduledValues(t);
-      g.gain.setTargetAtTime(0.5 * vel, t, a);
-      vibG.gain.setTargetAtTime(6, t, 0.4);
-    },
-    gateOff() {
-      const t = ac.currentTime;
-      g.gain.cancelScheduledValues(t);
-      g.gain.setTargetAtTime(0, t, 0.06);
-      vibG.gain.setTargetAtTime(0, t, 0.1);
-    },
-    setBright(x) { // 0..1 blow intensity -> brightness + drive
-      const t = ac.currentTime;
-      lp.frequency.setTargetAtTime(cfg.cutoff * (0.5 + x), t, 0.03);
-      setDrive(sh, cfg.drive * (0.4 + x * 1.6));
+/* ================= offline analysis ================= */
+function analyzeBuffer(buf, sampleRate, scaleName) {
+  const det = PitchDetector.forFloat32Array(WIN);
+  det.clarityThreshold = CLARITY_MIN;
+  const win = new Float32Array(WIN);
+  const frames = []; // {f, c, rms}
+  for (let pos = 0; pos + WIN <= buf.length; pos += HOP) {
+    win.set(buf.subarray(pos, pos + WIN));
+    let rms = 0;
+    for (let j = 0; j < WIN; j++) rms += win[j] * win[j];
+    rms = Math.sqrt(rms / WIN);
+    let f = 0, c = 0;
+    if (rms > 1e-4) { const r = det.findPitch(win, sampleRate); f = r[0]; c = r[1]; }
+    frames.push({ f, c, rms });
+  }
+  // relative gate from the near-quietest frames (room noise, not the tone)
+  const rs = frames.map(x => x.rms).sort((a, b) => a - b);
+  const floor = rs[Math.floor(rs.length * 0.05)] || 0.004;
+  const maxRms = rs[rs.length - 1] || 0.01;
+  const gate = Math.min(Math.max(0.008, floor * 4), maxRms * 0.5);
+
+  // segment into notes
+  const raw = [];
+  let cur = null, onN = 0, offN = 0;
+  const iv = SCALES[scaleName];
+  const snap = mf => {
+    const base = Math.round(mf);
+    let best = base, bestD = 1e9;
+    for (let o = -2; o <= 2; o++) for (const s of iv) {
+      const m = Math.floor(base / 12) * 12 + o * 12 + s;
+      const d = Math.abs(m - mf);
+      if (d < bestD) { bestD = d; best = m; }
     }
+    return best;
   };
+  frames.forEach((fr, i) => {
+    const tone = fr.c >= CLARITY_MIN && fr.rms >= gate && fr.f > 60 && fr.f < 5000;
+    if (tone) { onN++; offN = 0; } else { offN++; onN = 0; }
+    const t = i * HOP / sampleRate;
+    if (!cur && onN >= HOPS_ON) {
+      cur = { start: (i - HOPS_ON + 1) * HOP / sampleRate, fs: [], rms: [] };
+    }
+    if (cur && tone) { cur.fs.push(fr.f); cur.rms.push(fr.rms); }
+    if (cur && offN >= HOPS_OFF) {
+      const endT = (i - HOPS_OFF + 1) * HOP / sampleRate;
+      cur.fs.sort((a, b) => a - b);
+      const med = cur.fs[Math.floor(cur.fs.length / 2)];
+      const dur = endT - cur.start;
+      if (dur >= MIN_NOTE_S && med > 0) {
+        let mf = hz2midi(med);
+        const prev = raw.length ? raw[raw.length - 1].midiF : null;
+        if (prev !== null) {
+          while (mf > prev + 6) mf -= 12;
+          while (mf < prev - 6) mf += 12;
+        }
+        const midi = snap(mf);
+        const vel = Math.min(1, Math.max(...cur.rms) / (gate * 3));
+        raw.push({ midi, midiF: mf, start: cur.start, dur, vel });
+      }
+      cur = null;
+    }
+  });
+  // flush a note still open at end of buffer
+  if (cur) {
+    const endT = buf.length / sampleRate;
+    cur.fs.sort((a, b) => a - b);
+    const med = cur.fs[Math.floor(cur.fs.length / 2)];
+    const dur = endT - cur.start;
+    if (dur >= MIN_NOTE_S && med > 0) {
+      let mf = hz2midi(med);
+      const prev = raw.length ? raw[raw.length - 1].midiF : null;
+      if (prev !== null) {
+        while (mf > prev + 6) mf -= 12;
+        while (mf < prev - 6) mf += 12;
+      }
+      const vel = Math.min(1, Math.max(...cur.rms) / (gate * 3));
+      raw.push({ midi: snap(mf), midiF: mf, start: cur.start, dur, vel });
+    }
+  }
+  return raw.map(({ midi, start, dur, vel }) => ({ midi, start, dur, vel }));
+}
+
+/* ================= synth ================= */
+function ensureCtx() {
+  if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "playback" });
+  return AC;
 }
 function setDrive(sh, k) {
-  const n = 256, curve = new Float32Array(n);
+  const n = 128, curve = new Float32Array(n);
   for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; curve[i] = Math.tanh(x * (1 + k * 6)); }
   sh.curve = curve;
 }
-
-/* ================= note tracking ================= */
-const hz2midi = f => 69 + 12 * Math.log2(f / 440);
-const midi2hz = m => 440 * Math.pow(2, (m - 69) / 12);
-function median(a) { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; }
-function snapScale(midiFloat) {
-  const iv = SCALES[curScale];
-  const base = Math.round(midiFloat);
-  let best = base, bestD = 1e9;
-  for (let o = -2; o <= 2; o++) for (const s of iv) {
-    const m = Math.floor(base / 12) * 12 + o * 12 + s;
-    const d = Math.abs(m - midiFloat);
-    if (d < bestD) { bestD = d; best = m; }
+function playNotes(list, instKey) {
+  const ac = ensureCtx();
+  stopPlayback();
+  const cfg = INSTRUMENTS[instKey];
+  const osc = ac.createOscillator(); osc.type = cfg.type;
+  const lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = cfg.cutoff; lp.Q.value = 2;
+  const sh = ac.createWaveShaper(); setDrive(sh, cfg.drive);
+  const g = ac.createGain(); g.gain.value = 0;
+  osc.connect(lp); lp.connect(sh); sh.connect(g); g.connect(ac.destination);
+  osc.start();
+  synthNodes = { osc, g };
+  playing = true;
+  $("playBtn").textContent = "Stop";
+  const t0 = ac.currentTime + 0.08;
+  let endT = t0;
+  for (const n of list) {
+    const f = midi2hz(n.midi + (cfg.oct || 0));
+    const st = t0 + n.start, en = st + Math.max(0.08, n.dur * 0.96);
+    osc.frequency.setValueAtTime(f, st);
+    g.gain.setValueAtTime(0.0001, st);
+    g.gain.exponentialRampToValueAtTime(0.001 + 0.5 * n.vel, st + cfg.attack + 0.01);
+    g.gain.setValueAtTime(0.001 + 0.5 * n.vel, Math.max(st + 0.02, en - 0.05));
+    g.gain.exponentialRampToValueAtTime(0.0001, en);
+    endT = Math.max(endT, en);
   }
-  // hysteresis: don't chatter between neighbors
-  if (note && Math.abs(best - note.midi) === 1 && bestD * 100 > (50 - HYST_CENTS)) return note.midi;
-  return best;
+  g.gain.setValueAtTime(0.0001, endT + 0.05);
+  setTimeout(() => { if (playing) stopPlayback(); }, (endT - t0 + 0.3) * 1000);
 }
-function onHop({ f, c, rms }) {
-  hopBuf.push({ f, c, rms });
-  if (hopBuf.length > 12) hopBuf.shift();
-  const tone = c >= CLARITY_MIN && rms >= gate && f > 60 && f < 5000;
-
-  // level meter
-  const lvl = Math.min(1, rms / (gate * 4));
-  $("meterFill").style.width = (lvl * 100).toFixed(1) + "%";
-  $("gateMark").style.left = "25%";
-
-  if (tone) { onCount++; offCount = 0; } else { offCount++; onCount = 0; }
-
-  if (!note && onCount >= HOPS_ON) {
-    const fs = hopBuf.slice(-MED).map(h => h.f).filter(x => x > 0);
-    if (!fs.length) return;
-    let mf = hz2midi(median(fs));
-    note = { midi: snapScale(mf), freq: median(fs) };
-    synth.setFreq(midi2hz(note.midi + (curInst === "Bass" ? -12 : 0)));
-    synth.gateOn(Math.min(1, rms / (gate * 3)));
-  } else if (note && offCount >= HOPS_OFF) {
-    note = null; synth.gateOff();
-  } else if (note && tone) {
-    const fs = hopBuf.slice(-MED).map(h => h.f).filter(x => x > 0);
-    if (!fs.length) return;
-    let mf = hz2midi(median(fs));
-    // octave guard: keep continuity
-    const cur = note.midi;
-    while (mf > cur + OCT_GUARD) mf -= 12;
-    while (mf < cur - OCT_GUARD) mf += 12;
-    const snapped = snapScale(mf);
-    if (snapped !== note.midi) {
-      note.midi = snapped;
-      synth.setFreq(midi2hz(snapped + (curInst === "Bass" ? -12 : 0)));
-    }
-    synth.setBright(Math.min(1, rms / (gate * 4)));
-  }
-
-  // UI
-  if (note) {
-    const nm = NAMES[note.midi % 12] + (Math.floor(note.midi / 12) - 1);
-    if (nm !== lastUiNote) { lastUiNote = nm; $("noteName").innerHTML = nm.replace(/#/, "<small>#</small>"); }
-    $("freq").textContent = f.toFixed(1) + " Hz";
-  } else {
-    if (lastUiNote !== "") { lastUiNote = ""; $("noteName").textContent = "—"; $("freq").textContent = ""; }
-  }
+function stopPlayback() {
+  playing = false;
+  if (synthNodes) { try { synthNodes.osc.stop(); } catch (e) {} synthNodes = null; }
+  const pb = $("playBtn"); if (pb) pb.textContent = "Play as instrument";
+}
+function playOriginal() {
+  if (!rawBuffer) return;
+  const ac = ensureCtx();
+  stopPlayback();
+  const src = ac.createBufferSource();
+  const b = ac.createBuffer(1, rawBuffer.length, ac.sampleRate);
+  b.getChannelData(0).set(rawBuffer);
+  src.buffer = b; src.connect(ac.destination); src.start();
+  synthNodes = { osc: src, g: null };
+  playing = true;
+  $("origBtn").textContent = "Stop";
+  src.onended = () => { playing = false; synthNodes = null; $("origBtn").textContent = "Hear original"; };
+  const ob = $("origBtn"); const old = ob.onclick;
+  ob.onclick = () => { try { src.stop(); } catch (e) {} ob.onclick = old; $("origBtn").textContent = "Hear original"; };
 }
 
-/* ================= start / stop ================= */
-async function start() {
-  if (running) { stop(); return; }
+/* ================= record flow ================= */
+async function toggleRecord() {
+  if (recording) { stopRecord(); return; }
   try {
-    AC = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
-    await AC.resume();
-    const blob = new Blob([WORKLET_SRC], { type: "application/javascript" });
-    await AC.audioWorklet.addModule(URL.createObjectURL(blob));
-    worklet = new AudioWorkletNode(AC, "whistle-proc");
-    worklet.port.onmessage = e => onHop(e.data);
-
-    if (TEST_FREQ) {
-      const o = AC.createOscillator(); o.frequency.value = parseFloat(TEST_FREQ);
-      const og = AC.createGain(); og.gain.value = 0.4;
-      o.connect(og); og.connect(worklet); o.start();
-      window.__wbTestOsc = o;
-    } else {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-      });
-      const src = AC.createMediaStreamSource(stream);
-      src.connect(worklet);
-      window.__wbStream = stream;
-      calibrate(true); // quick room-floor learn
-    }
-
-    synth = makeSynth(AC, INSTRUMENTS[curInst]);
-    running = true;
-    $("startBtn").textContent = "Stop";
-    $("startBtn").classList.add("live");
-    const base = (AC.baseLatency || 0) * 1000, out = (AC.outputLatency || 0) * 1000;
-    const winMs = WIN / AC.sampleRate * 1000;
-    $("latency").innerHTML = "round-trip latency: <b>" + (base + out + winMs).toFixed(0) + " ms</b> (measured stack)";
-    window.__whistlebox = { get note() { return note; }, get running() { return running; } };
+    const ac = ensureCtx();
+    await ac.resume();
+    await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET_SRC], { type: "application/javascript" })));
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    micStream = stream;
+    const src = ac.createMediaStreamSource(stream);
+    capNode = new AudioWorkletNode(ac, "wb-capture");
+    chunks = [];
+    capNode.port.onmessage = e => {
+      chunks.push(new Float32Array(e.data));
+      let rms = 0; const d = e.data;
+      for (let i = 0; i < d.length; i += 4) rms += d[i] * d[i];
+      rms = Math.sqrt(rms / Math.ceil(d.length / 4));
+      $("meterFill").style.width = Math.min(100, rms * 400).toFixed(1) + "%";
+    };
+    src.connect(capNode);
+    recording = true; recStart = ac.currentTime;
+    $("recBtn").textContent = "Stop"; $("recBtn").classList.add("recording");
+    $("status").textContent = "recording… whistle your tune";
+    recTimerInt = setInterval(() => {
+      const s = Math.floor(ac.currentTime - recStart);
+      $("timer").textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    }, 250);
   } catch (err) {
     const e = $("err"); e.style.display = "block";
-    e.textContent = "Audio failed: " + err.message + ". Use headphones and allow mic access.";
+    e.textContent = "Mic failed: " + err.message;
   }
 }
-function stop() {
-  running = false; note = null;
-  try { AC && AC.close(); } catch (e) {}
-  try { window.__wbStream && window.__wbStream.getTracks().forEach(t => t.stop()); } catch (e) {}
-  AC = worklet = synth = null; hopBuf = []; onCount = offCount = 0;
-  $("startBtn").textContent = "Start whistling";
-  $("startBtn").classList.remove("live");
-  $("noteName").textContent = "—"; $("freq").textContent = "";
+function stopRecord() {
+  recording = false;
+  clearInterval(recTimerInt);
+  $("recBtn").textContent = "Record"; $("recBtn").classList.remove("recording");
+  $("status").textContent = "analyzing…";
+  try { micStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  try { capNode.disconnect(); } catch (e) {}
+  // assemble
+  let len = 0; for (const c of chunks) len += c.length;
+  rawBuffer = new Float32Array(len);
+  let o = 0; for (const c of chunks) { rawBuffer.set(c, o); o += c.length; }
+  setTimeout(() => {
+    const t0 = performance.now();
+    notes = analyzeBuffer(rawBuffer, AC.sampleRate, curScale);
+    const ms = (performance.now() - t0).toFixed(0);
+    $("status").textContent = "analyzed " + notes.length + " notes in " + ms + " ms";
+    renderNotes();
+    $("notes").style.display = "block";
+    $("playRow").style.display = "flex";
+    window.__whistlebox = { notes, get noteCount() { return notes.length; } };
+  }, 30);
 }
-function calibrate(silent) {
-  // learn room floor from recent hops
-  const rs = hopBuf.map(h => h.rms).filter(x => x > 0);
-  if (rs.length > 4) {
-    rs.sort((a, b) => a - b);
-    roomFloor = rs[Math.floor(rs.length * 0.3)];
-    gate = Math.max(0.008, roomFloor * 4);
-    if (!silent) $("hint").textContent = "Calibrated. Gate at " + (gate * 100).toFixed(1) + "% — whistle away.";
+function renderNotes() {
+  const strip = $("noteStrip"); strip.innerHTML = "";
+  $("noteCount").textContent = notes.length;
+  if (!notes.length) { strip.innerHTML = "<div style='color:var(--dim);font-size:13px;padding:18px'>no clear notes found — try whistling closer and steadier</div>"; return; }
+  const maxDur = Math.max(...notes.map(n => n.dur));
+  for (const n of notes) {
+    const d = document.createElement("div");
+    d.className = "nbar";
+    d.style.height = (30 + 26 * n.vel) + "px";
+    d.style.width = Math.max(26, 120 * n.dur / maxDur) + "px";
+    d.textContent = midiName(n.midi);
+    d.title = midiName(n.midi) + " " + n.dur.toFixed(2) + "s";
+    strip.appendChild(d);
   }
 }
 
@@ -1323,28 +1351,53 @@ for (const k of Object.keys(INSTRUMENTS)) {
   const b = document.createElement("button");
   b.textContent = k; if (k === curInst) b.classList.add("sel");
   b.onclick = () => { curInst = k;
-    [...$("instRow").children].forEach(x => x.classList.remove("sel")); b.classList.add("sel");
-    if (synth) { const keep = note; stop(); /* rebuild synth voice */ startSilentVoice(keep); }
-  };
+    [...$("instRow").children].forEach(x => x.classList.remove("sel")); b.classList.add("sel"); };
   $("instRow").appendChild(b);
-}
-async function startSilentVoice(keep) {
-  // swap instrument without dropping audio context
-  const ac = AC; if (!ac) { start(); return; }
-  try { synth.gateOff(); } catch (e) {}
-  await new Promise(r => setTimeout(r, 80));
-  synth = makeSynth(ac, INSTRUMENTS[curInst]);
-  if (keep && note) { synth.setFreq(midi2hz(note.midi + (curInst === "Bass" ? -12 : 0))); synth.gateOn(0.7); }
 }
 for (const k of Object.keys(SCALES)) {
   const b = document.createElement("button");
   b.textContent = k; if (k === curScale) b.classList.add("sel");
   b.onclick = () => { curScale = k;
-    [...$("scaleRow").children].forEach(x => x.classList.remove("sel")); b.classList.add("sel"); };
+    [...$("scaleRow").children].forEach(x => x.classList.remove("sel")); b.classList.add("sel");
+    if (rawBuffer) { notes = analyzeBuffer(rawBuffer, AC.sampleRate, curScale); renderNotes(); } };
   $("scaleRow").appendChild(b);
 }
-$("startBtn").onclick = start;
-if (TEST_FREQ) start(); // headless QA path
+$("recBtn").onclick = toggleRecord;
+$("againBtn").onclick = () => {
+  stopPlayback();
+  $("notes").style.display = "none"; $("playRow").style.display = "none";
+  $("timer").textContent = "0:00"; $("status").textContent = "tap record and whistle a tune";
+  $("meterFill").style.width = "0%";
+  notes = []; rawBuffer = null;
+};
+$("playBtn").onclick = () => { playing ? stopPlayback() : playNotes(notes, curInst); };
+$("origBtn").onclick = playOriginal;
+
+/* ================= headless test: synthetic melody ================= */
+if (TEST_MODE === "melody") {
+  (function () {
+    const sr = 48000, mk = (f, s) => {
+      const n = Math.floor(sr * s), b = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        b[i] = 0.5 * Math.sin(2 * Math.PI * f * t) * Math.min(1, i / 200) * Math.min(1, (n - i) / 800)
+             + 0.02 * Math.sin(2 * Math.PI * f * 2.01 * t);
+      }
+      return b;
+    };
+    const parts = [mk(440, 0.5), new Float32Array(Math.floor(sr * 0.15)), mk(523.25, 0.5),
+                   new Float32Array(Math.floor(sr * 0.15)), mk(659.25, 0.6)];
+    let len = 0; parts.forEach(p => len += p.length);
+    const buf = new Float32Array(len);
+    let o = 0; parts.forEach(p => { buf.set(p, o); o += p.length; });
+    rawBuffer = buf;
+    notes = analyzeBuffer(buf, sr, "Chromatic");
+    window.__whistlebox = { notes, get noteCount() { return notes.length; } };
+    renderNotes();
+    $("notes").style.display = "block";
+    $("status").textContent = "test melody analyzed: " + notes.length + " notes";
+  })();
+}
 </script>
 </body>
 </html>
