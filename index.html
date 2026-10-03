@@ -55,6 +55,7 @@
   <div class="tab active" data-page="play">Play</div>
   <div class="tab" data-page="train">Train</div>
   <div class="tab" data-page="key">Key</div>
+  <div class="tab" data-page="assign">Assign</div>
   <div class="tab" data-page="midi">MIDI</div>
 </div>
 
@@ -143,6 +144,29 @@
       <button id="detectKeyBtn">Detect from singing</button>
     </div>
     <div id="keyResult" style="font-size:13px; color:#9aa;"></div>
+  </div>
+</div>
+
+<div class="page" id="page-assign">
+  <div class="card">
+    <h3>Vowel / envelope → CC mapping</h3>
+    <div class="row"><label>aaa → CC <input type="number" id="ccAaaIn" value="74" min="0" max="127" style="width:64px"></label>
+      <label>min <input type="range" id="thAaa" min="0" max="100" value="10"></label></div>
+    <div class="row"><label>ooo → CC <input type="number" id="ccOooIn" value="71" min="0" max="127" style="width:64px"></label>
+      <label>min <input type="range" id="thOoo" min="0" max="100" value="10"></label></div>
+    <div class="row"><label>eee → CC <input type="number" id="ccEeeIn" value="76" min="0" max="127" style="width:64px"></label>
+      <label>min <input type="range" id="thEee" min="0" max="100" value="10"></label></div>
+    <div class="row"><label>env → CC <input type="number" id="ccEnvIn" value="11" min="0" max="127" style="width:64px"></label>
+      <label>min <input type="range" id="thEnv" min="0" max="100" value="5"></label></div>
+    <p style="font-size:13px; color:#8a90a0;">Thresholds gate each tracker to your voice. Click a meter on the Play tab to bypass it.</p>
+  </div>
+  <div class="card">
+    <h3>Profiles</h3>
+    <div class="row">
+      <button id="saveProf">Save profile</button>
+      <button id="loadProf">Load profile</button>
+      <span id="profStatus" style="font-size:13px; color:#9aa;"></span>
+    </div>
   </div>
 </div>
 
@@ -1547,10 +1571,12 @@ function drawMeters(d) {
   const now = performance.now();
   if (now - lastCC > 60 && d.rms > 0.01) {
     lastCC = now;
-    sendCC(+$('ccAaa').textContent, v.aaa);
-    sendCC(+$('ccOoo').textContent, v.ooo);
-    sendCC(+$('ccEee').textContent, v.eee);
-    sendCC(+$('ccEnv').textContent, v.env);
+    const gate = (key, val) => ccBypass[key] ? 0 : (val > ccThresh[key] ? (val - ccThresh[key]) / (1 - ccThresh[key]) : 0);
+    const ga = gate('aaa', v.aaa), go = gate('ooo', v.ooo), ge = gate('eee', v.eee), gn = gate('env', v.env);
+    if (ga) sendCC(ccMap.aaa, ga);
+    if (go) sendCC(ccMap.ooo, go);
+    if (ge) sendCC(ccMap.eee, ge);
+    if (gn) sendCC(ccMap.env, gn);
   }
 }
 
@@ -1745,6 +1771,46 @@ function downloadMidi() {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
+/* ================= assign tab ================= */
+const ccMap = { aaa: 74, ooo: 71, eee: 76, env: 11 };
+const ccThresh = { aaa: 0.1, ooo: 0.1, eee: 0.1, env: 0.05 };
+const ccBypass = { aaa: false, ooo: false, eee: false, env: false };
+[['Aaa','aaa'],['Ooo','ooo'],['Eee','eee'],['Env','env']].forEach(([C, k]) => {
+  $('cc' + C + 'In').onchange = e => { ccMap[k] = +e.target.value; $('cc' + C).textContent = ccMap[k]; };
+  $('th' + C).oninput = e => ccThresh[k] = +e.target.value / 100;
+});
+[['mAaa','aaa'],['mOoo','ooo'],['mEee','eee'],['mEnv','env']].forEach(([id, k]) => {
+  $(id).style.cursor = 'pointer';
+  $(id).onclick = () => {
+    ccBypass[k] = !ccBypass[k];
+    $(id).style.opacity = ccBypass[k] ? 0.3 : 1;
+  };
+});
+/* profiles: pads + cc map + scale in localStorage */
+$('saveProf').onclick = () => {
+  const data = { pads: state.pads, ccMap, ccThresh, scale: state.scale, root: state.root };
+  localStorage.setItem('voxmidi-profile', JSON.stringify(data));
+  $('profStatus').textContent = 'saved.';
+};
+$('loadProf').onclick = () => {
+  try {
+    const data = JSON.parse(localStorage.getItem('voxmidi-profile'));
+    if (!data) { $('profStatus').textContent = 'no saved profile.'; return; }
+    Object.assign(ccMap, data.ccMap); Object.assign(ccThresh, data.ccThresh);
+    state.scale = data.scale || 'Chromatic'; state.root = data.root || 0;
+    $('scaleSel').value = state.scale; $('rootSel').value = state.root;
+    (data.pads || []).forEach((sp, i) => {
+      if (state.pads[i] && sp.trained) {
+        state.pads[i] = sp;
+        const el = $('pad' + i);
+        el.classList.add('trained');
+        el.innerHTML = '<div class="pname">' + sp.name + '</div><div>trained · ' + sp.midi + '</div>';
+      }
+    });
+    $('profStatus').textContent = 'loaded.';
+  } catch (e) { $('profStatus').textContent = 'load failed.'; }
+};
+
 window.__vox = { state, snapToScale, hz2midi };
 </script>
 </body>
