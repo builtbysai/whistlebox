@@ -143,6 +143,7 @@
       </select></label>
       <label>Root <select id="rootSel"></select></label>
       <button id="detectKeyBtn">Detect from singing</button>
+      <button id="previewScaleBtn">Play scale</button>
     </div>
     <div id="keyResult" style="font-size:13px; color:#9aa;"></div>
   </div>
@@ -1719,6 +1720,16 @@ $('detectKeyBtn').onclick = () => {
   state.keyBuf.forEach(p => counts[p] = (counts[p] || 0) + 1);
   const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
   $('keyResult').textContent = 'most sung: ' + NOTE_NAMES[top] + ' — try ' + NOTE_NAMES[top] + ' Major or Minor.';
+};
+
+$('previewScaleBtn').onclick = () => {
+  if (!state.ac) { $('keyResult').textContent = 'start the microphone first (enables audio).'; return; }
+  const iv = SCALES[state.scale] || SCALES.Chromatic;
+  const base = 60 + state.root; // C4 + root
+  iv.forEach((st, i) => {
+    setTimeout(() => synthNoteOn(base + st, 0.7), i * 220);
+    setTimeout(() => synthNoteOff(), i * 220 + 200);
+  });
 };
 
 /* ================= MIDI capture → .mid download ================= */
